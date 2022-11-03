@@ -1,0 +1,25 @@
+ -B 
+
+"--endian=little" 
+
+"--cpu=ARM926EJ-S" 
+
+"--fpu=None" 
+
+"-p" 
+
+"C:\Program Files (x86)\IAR Systems\Embedded Workbench 7.2\arm\CONFIG\debugger\NXP\LPC3131.ddf" 
+
+"--drv_verify_download" 
+
+"--semihosting" 
+
+"--device=LPC3131" 
+
+"--rdi_driver_dll=C:\Program Files\SEGGER\JLinkARM_V408l\JLinkRDI.dll" 
+
+"--drv_catch_exceptions=0x000" 
+
+
+
+

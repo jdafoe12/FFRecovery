@@ -1,0 +1,680 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        26/Oct/2022  20:51:00
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\sys\lpc313x\csp\drv_spinor.c
+#    Command line =  
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\sys\lpc313x\csp\drv_spinor.c" -D BOOT_LEVEL_2 -lcN
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\List" -o
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\Obj" --no_cse --no_unroll --no_inline
+#        --no_code_motion --no_tbaa --no_clustering --no_scheduling --debug
+#        --endian=little --cpu=ARM926EJ-S -e --fpu=None --dlib_config
+#        "C:\Program Files (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        "C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\prj\iar\..\..\"
+#        -I "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\" --cpu_mode thumb -Ol
+#        --use_c++_inline
+#    List file    =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\List\drv_spinor.lst
+#    Object file  =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\Obj\drv_spinor.o
+#
+###############################################################################
+
+C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\sys\lpc313x\csp\drv_spinor.c
+      1          /*************************************************************************
+      2           *
+      3           *   Used with ICCARM and AARM.
+      4           *
+      5           *    (c) Copyright IAR Systems 2008
+      6           *
+      7           *    File name   : drv_spinor.c
+      8           *    Description : Atmel SPI NOR Flash driver
+      9           *
+     10           *    History :
+     11           *    1. Date        : 27.3.2009
+     12           *       Author      : Stoyan Choynev
+     13           *       Description : Initial Revision
+     14           *
+     15           *    $Revision: 31493 $
+     16           **************************************************************************/
+     17          
+     18          /** include files **/
+     19          #include "drv_spi.h"
+     20          #include "drv_cgu.h"
+     21          #include "drv_spinor.h"
+     22          /** local definitions **/
+     23          #define CMD_RDID        0x9F        /* read device ID */
+     24          #define CMD_RDSR        0xD7        /* read status register */
+     25          #define CMD_FAST_READ   0x0B        /* read data (extra command setup time allows higher SPI clock) */
+     26          
+     27          #define CMD_SE          0x7C        /* sector erase */
+     28          #define CMD_BE          0x50        /* block erase */
+     29          #define CMD_PE          0x81        /* page erase */
+     30          
+     31          #define CMD_DP          0xB9        /* deep power down */
+     32          #define CMD_RES         0xAB        /* release from deep power down */
+     33          
+     34          #define CMD_B1W         0x84        /* write buffer 1*/
+     35          #define CMD_B1MM        0x88        /* buffer 1 to Main Memory without Built-in Erase*/
+     36          #define CMD_B1ME        0x83        /* buffer 1 to Main Memory with Built-in Erase*/
+     37          
+     38          #define CMD_MMB1        0x53        /* main memory page to Buffer 1 */
+     39          /* status register defines */
+     40          #define STATUS_RDY      (1 << 7)
+     41          #define STATUS_COMP     (1 << 6)
+     42          #define STATUS_ID       (0xF<<2)
+     43          #define STATUS_PROTECT  (1 << 1)
+     44          #define STATUS_P2P      (1 << 0)
+     45          #define NUMDATAFLASH    (sizeof(at45Devices) / sizeof(At45Desc))
+     46          
+     47          typedef struct
+     48          {
+     49             /* dataflash page number */
+     50             Int32U pageNumber;
+     51             /* indicate if power-of-2 binary page supported */
+     52             Int32U hasBinaryPage;
+     53             /* dataflash page size */
+     54             Int32U pageSize;
+     55             /* page offset in command*/
+     56             Int32U pageOffset;
+     57             /* Dataflash ID */
+     58             Int8U id;
+     59          
+     60          } At45Desc;
+     61          
+     62          /** default settings **/
+     63          
+     64          /** external functions **/
+     65          extern void Dly_us(Int32U Dly);
+     66          /** external data **/
+     67          
+     68          /** internal functions **/
+     69          Int32U Page2Address(Int32U Page, Int8U * dAddr);
+     70          
+     71          /** public data **/
+     72          
+     73          /** private data **/
+     74          static const At45Desc at45Devices[] =
+     75          {
+     76             {  512,  1, 264,   9, 0x0C},
+     77             { 1024,  1, 264,   9, 0x14},
+     78             { 2048,  1, 264,   9, 0x1C},
+     79             { 4096,  1, 264,   9, 0x24},
+     80             { 4096,  1, 528,  10, 0x2C},
+     81             { 8192,  1, 528,  10, 0x34},
+     82             { 8192,  1, 1056, 11, 0x3C},
+     83             {16384,  1, 1056, 11, 0x10},
+     84             {16384,  1, 2112, 12, 0x18},
+     85             {32768,  1, 2112, 12, 0x20}
+     86          };
+     87          
+     88          __no_init static At45Desc * Device;
+     89          __no_init static Int32U Power2Page;
+     90          /** public functions **/
+     91          /*************************************************************************
+     92           * Function Name: InitSPINOR
+     93           * Parameters: None
+     94           *
+     95           * Return:  Int32U
+     96           *          0 - O.K.
+     97           *          1 - Error
+     98           * Description: Init Atmel SPI NOR Flash
+     99           *
+    100           *************************************************************************/
+    101          Int32U InitSPINOR(void)
+    102          {
+    103             SPI_CNFG SPI_cnfg;
+    104             SLAVE_CNFG Slave_cnfg;
+    105             Int8U Status;
+    106             Int8U ManufID[3];
+    107             Device = NULL;
+    108             /*Enable SPI Clocks*/
+    109             CGU_Run_Clock(SPI_PCLK);
+    110             CGU_Run_Clock(SPI_PCLK_GATED);
+    111             CGU_Run_Clock(SPI_CLK);
+    112             CGU_Run_Clock(SPI_CLK_GATED);
+    113             /* Enable TMR0 Clock. Used for Delay */
+    114             CGU_Run_Clock(TIMER0_PCLK);
+    115             /*Chip select connect to IOCONFIG module
+    116              and set High*/
+    117             SPI_CS0_HIGH;
+    118             /*Inter Delay time should not matter in
+    119             Normal Transmit Mode*/
+    120             SPI_cnfg.InterSlvDly = 1;
+    121             SPI_cnfg.LB_Mode = 0;       /*No loop back*/
+    122             SPI_cnfg.MS_Mode = 0;       /*Master Mode*/
+    123             SPI_cnfg.T_Mode = 0;        /*Normal Transmit mode*/
+    124             /*Configure SPI module*/
+    125             SPI_configure(&SPI_cnfg);
+    126             Slave_cnfg.Slave = SLAVE0;  /*SPI NOR on CS0*/
+    127             Slave_cnfg.Clock = 35MHZ;   /*Max NOR clock 45MHz*/
+    128             Slave_cnfg.InterDly = 0;    /*No delay*/
+    129             /*Nomber Words is not used in
+    130             Normal Transmit Mode*/
+    131             Slave_cnfg.NumberWords = SPI_FIFO_SIZE - 1;
+    132             Slave_cnfg.WordSize = 8-1;  /*8-bit mode*/
+    133             /*Chip Select is controlled by GPIO and
+    134             this are not matter fields*/
+    135             Slave_cnfg.CS_Value = 0;
+    136             Slave_cnfg.CS_Dly = 0;
+    137             /*SPI mode.*/
+    138             Slave_cnfg.Mode = SPI_MODE0;
+    139             Slave_configure(&Slave_cnfg);
+    140             Slave_update((SLAVE_ENABLE)<<0); /*Enable Slave 0*/
+    141             SPI_Enable();                    /*Enable SPI*/
+    142             /*Release from Deep Power Down*/
+    143             SPINOR_Res_DP();
+    144             Dly_us(100);
+    145             /*Read Manufacture ID*/
+    146             SPINOR_Get_Device_ID(ManufID);
+    147             /*If it is not Armel return Error*/
+    148             if(0x1F != ManufID[0]) return 1;
+    149          
+    150             do
+    151             {
+    152                Status = SPINOR_Read_Status();
+    153             }
+    154             while (!(Status & STATUS_RDY));
+    155             /*Device is in Power of 2 page mode
+    156               Power2Page = 1*/
+    157             Power2Page = Status & STATUS_P2P;
+    158             /*device ID*/
+    159             Int32U id = Status & STATUS_ID;
+    160             /*Do we support this device?*/
+    161             for(Int32U i = 0; NUMDATAFLASH > i; i++)
+    162             {
+    163                if(at45Devices[i].id == id)
+    164                {
+    165                   /*We support this device!
+    166                     Get its descriptor*/
+    167                   Device = (At45Desc *)&at45Devices[i];
+    168                }
+    169             }
+    170             /*If we do not have device descriptor
+    171               return error*/
+    172             if(NULL == Device) return 1;
+    173             /**/
+    174             return 0;
+    175          }
+    176          
+    177          /*************************************************************************
+    178           * Function Name: SPINOR_InOut
+    179           * Parameters: Int8U * DataOut - Out Data pointer
+    180           *             Int32U OutSize - Out Data Size
+    181           *             Int8U * DataIn - Input Data pointer
+    182           *             Int32U OutSize - Input Data Size
+    183           *
+    184           * Return: None
+    185           *
+    186           * Description: Send and Reads SPI data
+    187           *
+    188           *************************************************************************/
+    189          void SPINOR_InOut(Int8U * DataOut, Int32U OutSize,
+    190                            Int8U * DataIn,Int32U InSize)
+    191          {
+    192             Int32U Cntr;
+    193             /*Is there a Data to send*/
+    194             if(NULL != DataOut)
+    195             {
+    196                /*while send all data*/
+    197                while(OutSize)
+    198                {
+    199                   /*write data into SPI buffer*/
+    200                   Cntr = SPI_write_fifo(SLAVE0,DataOut, OutSize);
+    201                   OutSize -= Cntr;
+    202                   DataOut += Cntr;
+    203                }
+    204             }
+    205             /*wait until SPI si busy*/
+    206             while(SPI_Get_Status() & SPI_BUSY);
+    207             /*If Data should be read*/
+    208             if(NULL != DataIn)
+    209             {
+    210                SPI_rx_fifo_flush();
+    211                /*while receive all data*/
+    212                while(InSize)
+    213                {
+    214                   /*Dummy Write*/
+    215                   Cntr = SPI_write_fifo(SLAVE0,DataIn,(InSize > SPI_FIFO_SIZE) ? SPI_FIFO_SIZE : InSize);
+    216                   /*wait until SPI si busy*/
+    217                   while((SPI_Get_Status() & SPI_BUSY));
+    218                   /*Read data from fifo*/
+    219                   SPI_read_fifo(SLAVE0,DataIn,Cntr);
+    220                   InSize -= Cntr;
+    221                   DataIn += Cntr;
+    222                }
+    223             }
+    224          }
+    225          
+    226          /*************************************************************************
+    227           * Function Name: SPINOR_DP
+    228           * Parameters: None
+    229           *
+    230           * Return: None
+    231           *
+    232           * Description: Put Atmel SPI NOR Flash in Deep Power Down Mode
+    233           *
+    234           *************************************************************************/
+    235          void SPINOR_DP(void)
+    236          {
+    237             /*Command Deep Power Down*/
+    238             Int8U  DataOut[1] = {CMD_DP};
+    239             /*Drive chip select low*/
+    240             SPI_CS0_LOW;
+    241             /*Send One Byte Command, no
+    242              in data*/
+    243             SPINOR_InOut(DataOut,1,NULL,0);
+    244             /*Drive chip select high*/
+    245             SPI_CS0_HIGH;
+    246          }
+    247          /*************************************************************************
+    248           * Function Name: SPINOR_Res_DP
+    249           * Parameters: None
+    250           *
+    251           * Return: None
+    252           *
+    253           * Description: Release Atmel SPI NOR Flash from Deep Power Down Mode
+    254           *
+    255           *************************************************************************/
+    256          void SPINOR_Res_DP(void)
+    257          {
+    258             /*Command Release Deep Power Down*/
+    259             Int8U DataOut[1] = {CMD_RES};
+    260             /*Drive chip select low*/
+    261             SPI_CS0_LOW;
+    262             /*Send One Byte Command, no
+    263              in data*/
+    264             SPINOR_InOut(DataOut,1,NULL,0);
+    265             /*Drive chip select low*/
+    266             SPI_CS0_HIGH;
+    267          }
+    268          /*************************************************************************
+    269           * Function Name: SPINOR_Get_Device_ID
+    270           * Parameters: Int8U * id - ID pointer
+    271           *
+    272           * Return: None
+    273           *
+    274           * Description: Reads device ID
+    275           *
+    276           *************************************************************************/
+    277          void SPINOR_Get_Device_ID(Int8U * id)
+    278          {
+    279             /*Command Read ID*/
+    280             Int8U  DataOut[1] = {CMD_RDID};
+    281             /*Drive chip select low*/
+    282             SPI_CS0_LOW;
+    283             /*Send One Byte Command and
+    284             Read 3 Bytes ID*/
+    285             SPINOR_InOut(DataOut,1,id,3);
+    286             /*Drive chip select high*/
+    287             SPI_CS0_HIGH;
+    288          }
+    289          /*************************************************************************
+    290           * Function Name: SPINOR_Read_Status
+    291           * Parameters: None
+    292           *
+    293           * Return: Int8U Status register
+    294           *
+    295           * Description: Read Atmel SPI NOR Status register
+    296           *
+    297           *************************************************************************/
+    298          Int8U SPINOR_Read_Status(void)
+    299          {
+    300             /*Command Read Status Register*/
+    301             Int8U DataOut[1] = {CMD_RDSR};
+    302             Int8U Status;
+    303             /*Drive chip select low*/
+    304             SPI_CS0_LOW;
+    305             /*Send One Byte Command, read
+    306             one byte Status*/
+    307             SPINOR_InOut(DataOut,1,&Status,1);
+    308             /*Drive chip select high*/
+    309             SPI_CS0_HIGH;
+    310          
+    311             return Status;
+    312          }
+    313          /*************************************************************************
+    314           * Function Name: SPINOR_Erase_Block
+    315           * Parameters: Int32U Page - Page into the Block to be Erased
+    316           *
+    317           * Return: None
+    318           *
+    319           * Description: Erase block (8 pages).
+    320           *
+    321           *************************************************************************/
+    322          void SPINOR_Erase_Block(Int32U Page)
+    323          {
+    324             Int8U DataOut[5];
+    325             Int32U OutSize;
+    326             /*Command Block Erase*/
+    327             DataOut[0] = CMD_BE;
+    328             /*Form Address Bytes*/
+    329             OutSize = Page2Address(Page,&DataOut[1]) + 1;
+    330             /*Drive chip select low*/
+    331             SPI_CS0_LOW;
+    332             /*Send four or five bytes, no in data*/
+    333             SPINOR_InOut(DataOut,OutSize,NULL,0);
+    334             /*Drive chip select high*/
+    335             SPI_CS0_HIGH;
+    336             /*Wait device to be ready*/
+    337             while(!(SPINOR_Read_Status() & STATUS_RDY));
+    338          }
+    339          
+    340          /*************************************************************************
+    341           * Function Name: SPINOR_Read_Page
+    342           * Parameters: Int32U Page - Page Number
+    343           *             Int8U * Dest - Destination buffer
+    344           * Return: None
+    345           *
+    346           * Description: Copy one Page from SPI NOR
+    347           *              into Dest buffer.
+    348           *
+    349           *************************************************************************/
+    350          void SPINOR_Read_Page(Int32U Page, Int8U * Dest)
+    351          {
+    352             Int8U DataOut[6];
+    353             Int32U OutSize;
+    354             /*Commad Fast Read*/
+    355             DataOut[0] = CMD_FAST_READ;
+    356             /*Form Address Bytes*/
+    357             OutSize = Page2Address(Page,&DataOut[1]) + 1;
+    358             DataOut[OutSize++] = 0xFF;/*Dummy byte*/
+    359             /*Drive chip select low*/
+    360             SPI_CS0_LOW;
+    361             /*Send five or six bytes, read one page*/
+    362             SPINOR_InOut(DataOut,OutSize,Dest,SPINOR_GetPageSize());
+    363             /*Drive chip select high*/
+    364             SPI_CS0_HIGH;
+    365          }
+    366          
+    367          /*************************************************************************
+    368           * Function Name: SPINOR_Write_Page
+    369           * Parameters: Int32U Page - Page Number
+    370           *             Int8U * Source - Source buffer
+    371           * Return: None
+    372           *
+    373           * Description: Program one Page into SPI NOR Flash
+    374           *              Read data from Source buffer
+    375           *              Note: The page should be erased before using
+    376           *                    SPINOR_Write_Page funcion
+    377           *************************************************************************/
+    378          void SPINOR_Write_Page(Int32U Page, Int8U * Source)
+    379          {
+    380             Int8U DataOut[5];
+    381             Int32U OutSize;
+    382             /*Commad write buffer 1*/
+    383             DataOut[0] = CMD_B1W;
+    384             /*Start Address into the Buffer
+    385               is 0*/
+    386             DataOut[1] = 0;
+    387             DataOut[2] = 0;
+    388             DataOut[3] = 0;
+    389             DataOut[4] = 0;
+    390             OutSize = (16384 <= Device->pageNumber) ? 5:4;
+    391             /*Drive chip select low*/
+    392             SPI_CS0_LOW;
+    393             /*Send four or five bytes, no in data*/
+    394             SPINOR_InOut(DataOut,OutSize,NULL,0);
+    395             /*Send one page, no in data*/
+    396             SPINOR_InOut(Source,SPINOR_GetPageSize(),NULL,0);
+    397             /*Drive chip select high*/
+    398             SPI_CS0_HIGH;
+    399             /*Wait device to be ready*/
+    400             while(!(SPINOR_Read_Status() & STATUS_RDY));
+    401             /*Commad Buffer 1 to Main Memory
+    402              Page Program without Built-in Erase*/
+    403             DataOut[0] = CMD_B1MM;
+    404             /*Form Address Bytes*/
+    405             OutSize = Page2Address(Page,&DataOut[1]) + 1;
+    406             /*Drive chip select low*/
+    407             SPI_CS0_LOW;
+    408             /*Send four or five bytes, no in data*/
+    409             SPINOR_InOut(DataOut,OutSize,NULL,0);
+    410             /*Drive chip select high*/
+    411             SPI_CS0_HIGH;
+    412             /*Wait device to be ready*/
+    413             while(!(SPINOR_Read_Status() & STATUS_RDY));
+    414          }
+    415          
+    416          /*************************************************************************
+    417           * Function Name: SPINOR_Write_Bytes
+    418           * Parameters: Int32U Page - Page Number
+    419           *             Int32U Addr - Address into Page
+    420           *             Int8U * Source - Source buffer
+    421           *             Int32U Size - Size of the data
+    422           * Return: None
+    423           *
+    424           * Description: Program Bytes (Size) into Page.
+    425           *              Read Data from Source buffer
+    426           *              Note: It will modify only desired bytes. If end of
+    427           *                    page is reached it will  wrap around back to
+    428           *                    the beginning.
+    429           *
+    430           *************************************************************************/
+    431          void SPINOR_Write_Bytes(Int32U Page, Int32U Addr, Int8U * Source, Int32U Size)
+    432          {
+    433             Int8U DataOut[5];
+    434             Int32U OutSize;
+    435             /*Commad Main Memory to Buffer 1*/
+    436             DataOut[0] = CMD_MMB1;
+    437             /*Form Address Bytes*/
+    438             OutSize = Page2Address(Page,&DataOut[1]) + 1;
+    439             /*Drive chip select low*/
+    440             SPI_CS0_LOW;
+    441             /*Send four of five bytes, no in data*/
+    442             SPINOR_InOut(DataOut,OutSize,NULL,0);
+    443             /*Drive chip select high*/
+    444             SPI_CS0_HIGH;
+    445             /*Wait device to be ready*/
+    446             while(!(SPINOR_Read_Status() & STATUS_RDY));
+    447             /*Commad write buffer 1*/
+    448             DataOut[0] = CMD_B1W;
+    449             /*Start Address into the Buffer*/
+    450             if(16384 <= Device->pageNumber)
+    451             {
+    452                DataOut[1] = ((Addr & 0x0F000000) >> 24);
+    453                DataOut[2] = ((Addr & 0x00FF0000) >> 16);
+    454                DataOut[3] = ((Addr & 0x0000FF00) >> 8);
+    455                DataOut[4] = ((Addr & 0x000000FF) >> 0);
+    456                OutSize = 5;
+    457             }
+    458             else
+    459             {
+    460                DataOut[1] = ((Addr & 0x00FF0000) >> 16);
+    461                DataOut[2] = ((Addr & 0x0000FF00) >> 8);
+    462                DataOut[3] = ((Addr & 0x000000FF) >> 0);
+    463                OutSize = 4;
+    464             }
+    465             /*Drive chip select low*/
+    466             SPI_CS0_LOW;
+    467             /*Send four of five bytes, no in data*/
+    468             SPINOR_InOut(DataOut,OutSize,NULL,0);
+    469             /*Send data bytes, no in data*/
+    470             SPINOR_InOut(Source,Size,NULL,0);
+    471             /*Drive chip select high*/
+    472             SPI_CS0_HIGH;
+    473             /*Wait device to be ready*/
+    474             while(!(SPINOR_Read_Status() & STATUS_RDY));
+    475             /*Commad Buffer 1 to Main Memory
+    476              Page Program with Built-in Erase*/
+    477             DataOut[0] = CMD_B1ME;
+    478             /*Form Address Bytes*/
+    479             OutSize = Page2Address(Page,&DataOut[1]) + 1;
+    480             /*Drive chip select low*/
+    481             SPI_CS0_LOW;
+    482             /*Send four of five bytes, no in data*/
+    483             SPINOR_InOut(DataOut,OutSize,NULL,0);
+    484             /*Drive chip select high*/
+    485             SPI_CS0_HIGH;
+    486             /*Wait device to be ready*/
+    487             while(!(SPINOR_Read_Status() & STATUS_RDY));
+    488          }
+    489          
+    490          Int32U SPINOR_GetPageNum(void)
+    491          {
+    492             return Device->pageNumber;
+    493          }
+    494          
+    495          Int32U SPINOR_GetPageSize(void)
+    496          {
+    497             if(Power2Page)
+    498             {
+    499                /*Device is in Power of 2 Page mode.
+    500                 Reduce Page Size*/
+    501                return Device->pageSize & ~0xFF;
+    502             }
+    503             return Device->pageSize;
+    504          }
+    505          /** private functions **/
+    506          Int32U Page2Address(Int32U Page, Int8U * dAddr)
+    507          {
+    508             Int32U tmp;
+    509          
+    510             tmp = Page<<(Device->pageOffset - Power2Page);
+    511          
+    512             if(16384 <= Device->pageNumber)
+    513             {
+    514                *dAddr++ = ((tmp & 0x0F000000) >> 24);
+    515                *dAddr++ = ((tmp & 0x00FF0000) >> 16);
+    516                *dAddr++ = ((tmp & 0x0000FF00) >> 8);
+    517                *dAddr = ((tmp & 0x000000FF) >> 0);
+    518          
+    519                return 4;
+    520             }
+    521          
+    522             *dAddr++ = ((tmp & 0x00FF0000) >> 16);
+    523             *dAddr++ = ((tmp & 0x0000FF00) >> 8);
+    524             *dAddr = ((tmp & 0x000000FF) >> 0);
+    525          
+    526             return 3;
+    527          }
+
+   Maximum stack usage in bytes:
+
+   .cstack Function
+   ------- --------
+      32   InitSPINOR
+        32   -> CGU_Run_Clock
+        32   -> Dly_us
+        32   -> SPINOR_Get_Device_ID
+        32   -> SPINOR_Read_Status
+        32   -> SPINOR_Res_DP
+        32   -> SPI_Enable
+        32   -> SPI_configure
+        32   -> Slave_configure
+        32   -> Slave_update
+       4   Page2Address
+       8   SPINOR_DP
+         8   -> SPINOR_InOut
+      16   SPINOR_Erase_Block
+        16   -> Page2Address
+        16   -> SPINOR_InOut
+        16   -> SPINOR_Read_Status
+       0   SPINOR_GetPageNum
+       4   SPINOR_GetPageSize
+      16   SPINOR_Get_Device_ID
+        16   -> SPINOR_InOut
+      24   SPINOR_InOut
+        24   -> SPI_Get_Status
+        24   -> SPI_read_fifo
+        24   -> SPI_rx_fifo_flush
+        24   -> SPI_write_fifo
+      24   SPINOR_Read_Page
+        24   -> Page2Address
+        24   -> SPINOR_GetPageSize
+        24   -> SPINOR_InOut
+       8   SPINOR_Read_Status
+         8   -> SPINOR_InOut
+       8   SPINOR_Res_DP
+         8   -> SPINOR_InOut
+      32   SPINOR_Write_Bytes
+        32   -> Page2Address
+        32   -> SPINOR_InOut
+        32   -> SPINOR_Read_Status
+      24   SPINOR_Write_Page
+        24   -> Page2Address
+        24   -> SPINOR_GetPageSize
+        24   -> SPINOR_InOut
+        24   -> SPINOR_Read_Status
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+       4  ??DataTable10
+       4  ??DataTable10_1
+       4  ??DataTable11
+       4  ??DataTable11_1
+       4  ??DataTable11_2
+       4  ??DataTable11_3
+       4  ??DataTable5
+       4  ??DataTable6
+       4  ??DataTable6_1
+       4  ??DataTable6_2
+       4  ??DataTable6_3
+       4  ??DataTable6_4
+       4  ??DataTable6_5
+       4  ??DataTable6_6
+       4  ??DataTable6_7
+       4  ??DataTable6_8
+       4  ??DataTable6_9
+       4  ??DataTable7
+       4  ??DataTable7_1
+       4  ??DataTable7_2
+       4  ??DataTable7_3
+       4  ??DataTable9
+       1  ?_0
+       1  ?_1
+       1  ?_2
+       1  ?_3
+       4  Device
+     280  InitSPINOR
+      80  Page2Address
+       4  Power2Page
+      48  SPINOR_DP
+      66  SPINOR_Erase_Block
+       8  SPINOR_GetPageNum
+      30  SPINOR_GetPageSize
+      50  SPINOR_Get_Device_ID
+     106  SPINOR_InOut
+      74  SPINOR_Read_Page
+      56  SPINOR_Read_Status
+      48  SPINOR_Res_DP
+     266  SPINOR_Write_Bytes
+     180  SPINOR_Write_Page
+       4  _A_IOCONF_SPI_M0_CLR
+       4  _A_IOCONF_SPI_M0_SET
+       4  _A_IOCONF_SPI_M1_SET
+     200  at45Devices
+
+ 
+     8 bytes in section .noinit
+    12 bytes in section .noinit (abs)
+   204 bytes in section .rodata
+ 1 380 bytes in section .text
+ 
+ 1 380 bytes of CODE  memory
+   204 bytes of CONST memory
+     8 bytes of DATA  memory (+ 12 bytes shared)
+
+Errors: none
+Warnings: none

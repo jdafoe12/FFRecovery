@@ -1,0 +1,182 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        26/Oct/2022  20:51:02
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\core\ubi\ubi_table.c
+#    Command line =  
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\core\ubi\ubi_table.c" -D BOOT_LEVEL_2 -lcN
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\List" -o
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\Obj" --no_cse --no_unroll --no_inline
+#        --no_code_motion --no_tbaa --no_clustering --no_scheduling --debug
+#        --endian=little --cpu=ARM926EJ-S -e --fpu=None --dlib_config
+#        "C:\Program Files (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        "C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\prj\iar\..\..\"
+#        -I "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\" --cpu_mode thumb -Ol
+#        --use_c++_inline
+#    List file    =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\List\ubi_table.lst
+#    Object file  =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\Obj\ubi_table.o
+#
+###############################################################################
+
+C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\core\ubi\ubi_table.c
+      1          /*********************************************************
+      2           * Module name: ubi_table.c
+      3           *
+      4           * Copyright 2010, 2011. All Rights Reserved, Crane Chu.
+      5           *
+      6           * This file is part of OpenNFM.
+      7           *
+      8           * OpenNFM is free software: you can redistribute it and/or 
+      9           * modify it under the terms of the GNU General Public 
+     10           * License as published by the Free Software Foundation, 
+     11           * either version 3 of the License, or (at your option) any 
+     12           * later version.
+     13           * 
+     14           * OpenNFM is distributed in the hope that it will be useful,
+     15           * but WITHOUT ANY WARRANTY; without even the implied 
+     16           * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR 
+     17           * PURPOSE. See the GNU General Public License for more 
+     18           * details.
+     19           *
+     20           * You should have received a copy of the GNU General Public 
+     21           * License along with OpenNFM. If not, see 
+     22           * <http://www.gnu.org/licenses/>.
+     23           *
+     24           * First written on 2010-01-01 by cranechu@gmail.com
+     25           *
+     26           * Module Description:
+     27           *    Basic function of table read/write.
+     28           *
+     29           *********************************************************/
+     30          
+     31          #include <core\inc\cmn.h>
+     32          #include <core\inc\mtd.h>
+     33          #include <sys\sys.h>
+     34          #include "ubi_inc.h"
+     35          
+     36          /*
+     37          write a page of table entries
+     38          */
+     39          STATUS TABLE_Write(PHY_BLOCK block, PAGE_OFF page, void* buffer) {
+     40            STATUS ret;
+     41            SPARE footprint;
+     42          
+     43            /* set footprint in spare data: mark 0 in first byte */
+     44            footprint[0] = 0;
+     45          
+     46            /* write table, and footprint to mtd */
+     47            ret = MTD_Program(block, page, buffer, footprint);
+     48            if (ret == STATUS_SUCCESS) {
+     49              ret = MTD_WaitReady(block);
+     50            }
+     51          
+     52            return ret;
+     53          }
+     54          
+     55          /*
+     56          read a page of table entries
+     57          how?
+     58          */
+     59          //若* page是具体的数,如0,1,2等，就读一个固定页
+     60          //若* page是INVALID_PAGE，就是二分查找读最新页
+     61          STATUS 
+     62          TABLE_Read(PHY_BLOCK block, PAGE_OFF* page, void* buffer) {
+     63            PAGE_OFF head = 0;
+     64            PAGE_OFF tail = PAGE_PER_PHY_BLOCK;
+     65            PAGE_OFF mid;
+     66            STATUS ret;
+     67            SPARE footprint;
+     68          
+     69            ASSERT(page != NULL);
+     70            if (*page != INVALID_PAGE) {
+     71              tail = head = *page;
+     72            }
+     73          
+     74            /* binary search in block, and read the valid table */
+     75            mid = (head + tail) / 2;
+     76            while (mid != head && mid != tail) {
+     77              /* read in the mid page. Only read spare data as table's footprint */
+     78              ret = MTD_Read(block, mid, NULL, footprint);
+     79              if (ret == STATUS_SUCCESS) {
+     80                if (footprint[0] == (UINT32) (-1)) {
+     81                  /* ALL Fs, empty page, search upward */
+     82                  tail = mid;
+     83                } else {
+     84                  /* valid page, search downward */
+     85                  head = mid;
+     86                }
+     87              } else {
+     88                /* read failed, should be an ecc error, and may be cause by PL,
+     89                 * so, search upward.
+     90                 */
+     91                tail = mid;
+     92              }
+     93          
+     94              mid = (head + tail) / 2;
+     95            }
+     96          
+     97            ASSERT(tail == head || tail == head + 1);
+     98            *page = mid;
+     99          
+    100            /* read out the page on head to QUEUE_TABLE */
+    101            ret = MTD_Read(block, *page, buffer, footprint);
+    102            if (ret == STATUS_SUCCESS) {
+    103              if (footprint[0] == (UINT32) (-1)) {
+    104                /* all Fs, empty page */
+    105                ret = STATUS_FAILURE;
+    106              }
+    107            }
+    108          
+    109            if (ret != STATUS_SUCCESS) {
+    110              *page = INVALID_PAGE;
+    111            }
+    112          
+    113            return ret;
+    114          }
+    115          
+
+   Maximum stack usage in bytes:
+
+   .cstack Function
+   ------- --------
+      40   TABLE_Read
+        40   -> MTD_Read
+      16   TABLE_Write
+        16   -> MTD_Program
+        16   -> MTD_WaitReady
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+     168  TABLE_Read
+      36  TABLE_Write
+
+ 
+ 204 bytes in section .text
+ 
+ 204 bytes of CODE memory
+
+Errors: none
+Warnings: none

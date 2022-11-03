@@ -1,0 +1,264 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        26/Oct/2022  20:50:59
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\sys\lpc313x\csp\drv_intc.c
+#    Command line =  
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\sys\lpc313x\csp\drv_intc.c" -D BOOT_LEVEL_2 -lcN
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\List" -o
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\Obj" --no_cse --no_unroll --no_inline
+#        --no_code_motion --no_tbaa --no_clustering --no_scheduling --debug
+#        --endian=little --cpu=ARM926EJ-S -e --fpu=None --dlib_config
+#        "C:\Program Files (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        "C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\prj\iar\..\..\"
+#        -I "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\" --cpu_mode thumb -Ol
+#        --use_c++_inline
+#    List file    =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\List\drv_intc.lst
+#    Object file  =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\Obj\drv_intc.o
+#
+###############################################################################
+
+C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\sys\lpc313x\csp\drv_intc.c
+      1          /*************************************************************************
+      2           *
+      3           *   Used with ICCARM and AARM.
+      4           *
+      5           *    (c) Copyright IAR Systems 2008
+      6           *
+      7           *    File name   : drv_intc.c
+      8           *    Description : LPC313x Interrupt controller driver
+      9           *
+     10           *    History :
+     11           *    1. Date        : 10.4.2009 ã.
+     12           *       Author      : Stoyan Choynev
+     13           *       Description : Initial revistion
+     14           *
+     15           *    $Revision: 31493 $
+     16           **************************************************************************/
+     17          
+     18          /** include files **/
+     19          #include <NXP\iolpc3130.h>
+     20          #include <assert.h>
+     21          #include "arm_comm.h"
+     22          #include "drv_cgu.h"
+     23          
+     24          /** local definitions **/
+     25          typedef struct _IntrVecTable_t {
+     26            VoidFpnt_t pIntrFunc;
+     27            Int32U IntrPriority;
+     28          } IntrVecTable_t, *pIntrVecTable_t;
+     29          /** default settings **/
+     30          
+     31          /** external functions **/
+     32          
+     33          /** external data **/
+     34          extern Int32U __vector[];
+     35          extern Int32U __vector_end[];
+     36          
+     37          /** internal functions **/
+     38          void No_IRQ(void);
+     39          void INTC_Copy_Vector(Int32U * Dest);
+     40          /** public data **/
+     41          
+     42          /** private data **/
+     43          #pragma data_alignment=2048
+     44          static IntrVecTable_t IntTbl[ISRAM1_MRC_FINISHED + 1];
+     45          /** public functions **/
+     46          /*************************************************************************
+     47           * Function Name: IRQ_Handler
+     48           * Parameters: None
+     49           *
+     50           * Return: None
+     51           *
+     52           * Description: Nested IRQ handler.
+     53           *
+     54           *************************************************************************/
+     55          __arm __nested __irq void IRQ_Handler(void) {
+     56            /*Save current priority mask*/
+     57            volatile Int32U PriorityMask = INT_PRIORITYMASK_0;
+     58            /*read IRQ interrupt vector*/
+     59            IntrVecTable_t * IntVector = (IntrVecTable_t *) INT_VECTOR_0;
+     60            /*Update interrup priority mask*/
+     61            INT_PRIORITYMASK_0 = IntVector->IntrPriority;
+     62            /*enable interrupts*/
+     63            __enable_irq();
+     64            /*Call Interrupt Service Routine*/
+     65            (IntVector->pIntrFunc)();
+     66            /*disable interrupts*/
+     67            __disable_irq();
+     68            /*restore priority mask*/
+     69            INT_PRIORITYMASK_0 = PriorityMask;
+     70          }
+     71          /*************************************************************************
+     72           * Function Name: INTC_Init
+     73           * Parameters:Int32U * VectorAddress - Pointer to RAM (SDRAM)
+     74           *                                     array. ARM interrupt vectors
+     75           *                                     will be copyed at this address
+     76           * Return: None
+     77           *
+     78           * Description: Initialize LPC313x Interrupt Controller
+     79           *
+     80           *************************************************************************/
+     81          void INTC_Init(Int32U * VectorAddress) {
+     82            /*Enable Intrrupt Controller Clocks*/
+     83            CGU_Run_Clock(AHB_TO_INTC_CLK);
+     84            CGU_Run_Clock(INTC_CLK);
+     85            /*Interrupt vector register init. Only IRQ
+     86             table is used. FIQ set to zero.*/
+     87            INT_VECTOR_0 = (Int32U) IntTbl;
+     88            INT_VECTOR_1 = 0;
+     89            /*Set priority mask to low i.e. do not mask
+     90             any interrupts.*/
+     91            INT_PRIORITYMASK_0 = 0;
+     92            INT_PRIORITYMASK_1 = 0;
+     93            /*Interrupt init*/
+     94            IntTbl[0].pIntrFunc = No_IRQ;
+     95            IntTbl[0].IntrPriority = 0;
+     96          
+     97            for (Int32U i = CASCADED_IRQ_0; ISRAM1_MRC_FINISHED >= i; i++) {
+     98              /*IRQ table init*/
+     99              IntTbl[i].pIntrFunc = No_IRQ;
+    100              IntTbl[i].IntrPriority = 0;
+    101              /*Disable all interrupts. Set all as IRQ,
+    102               active high, priroity 0 (interrupt is masked).*/
+    103              *(&INT_REQUEST_1 - 1 + i) = (1UL << 29) |  // clear software interrupt
+    104                  (1UL << 28) |  // Update Priority
+    105                  (1UL << 27) |  // Update target
+    106                  (1UL << 26) |  // Update interrupt enable
+    107                  (1UL << 25) |  // Update interrupt active level
+    108                  0;
+    109            }
+    110            /*Copy Arm Vectors*/
+    111            INTC_Copy_Vector(VectorAddress);
+    112          }
+    113          
+    114          /*************************************************************************
+    115           * Function Name: INTC_IRQInstall
+    116           * Parameters:VoidFpnt_t ISR - Interrup Service Rotune
+    117           *            Int32U IRQIndex - IRQ Number
+    118           *            Int32U Priority - Priority level from 1(low) to 15(high)
+    119           *            Int32U Active   - Active level 0 - high, 1 - low
+    120           * Return: None
+    121           *
+    122           * Description: Install IRQ
+    123           *
+    124           *************************************************************************/
+    125          void INTC_IRQInstall(VoidFpnt_t ISR, Int32U IRQIndex, Int32U Priority,
+    126                               Int32U Active) {
+    127            assert((CASCADED_IRQ_0 <= IRQIndex) && (ISRAM1_MRC_FINISHED >= IRQIndex));
+    128            assert((1 <= Priority) && (15 >= Priority));
+    129            /*Update Interrupt Table*/
+    130            IntTbl[IRQIndex].pIntrFunc = ISR;
+    131            IntTbl[IRQIndex].IntrPriority = Priority;
+    132            /*Set INT_REQUEST*/
+    133            *(&INT_REQUEST_1 - 1 + IRQIndex) = (1UL << 29) |  // clear software interrupt
+    134                (1UL << 28) |  // Update Priority
+    135                (1UL << 27) |  // Update target
+    136                (1UL << 26) |  // Update interrupt enable
+    137                (1UL << 25) |  // Update interrupt active level
+    138                ((Active) ? (1 << 17) : 0) | Priority;
+    139          }
+    140          /*************************************************************************
+    141           * Function Name: INTC_IntEnable
+    142           * Parameters:Int32U IRQIndex - IRQ Number
+    143           *            Int32U Enable - 0 - Disable, 1- Enable)
+    144           * Return: None
+    145           *
+    146           * Description: Enable or Disable IRQ
+    147           *
+    148           *************************************************************************/
+    149          void INTC_IntEnable(Int32U IRQIndex, Int32U Enable) {
+    150            *(&INT_REQUEST_1 - 1 + IRQIndex) = (1UL << 26) | ((Enable) ? (1 << 16) : 0);
+    151          }
+    152          
+    153          /** private functions **/
+    154          void No_IRQ(void) {
+    155          }
+    156          
+    157          void INTC_Copy_Vector(Int32U * Dest) {
+    158            Int32U * Src = __vector;
+    159            while (Src <= __vector_end) {
+    160              *Dest++ = *Src++;
+    161            }
+    162          }
+
+   Maximum stack usage in bytes:
+
+   .cstack Function
+   ------- --------
+       4   INTC_Copy_Vector
+      24   INTC_IRQInstall
+        24   -> __aeabi_assert
+        24   -> __iar_EmptyStepPoint
+       8   INTC_Init
+         8   -> CGU_Run_Clock
+         8   -> INTC_Copy_Vector
+       4   INTC_IntEnable
+      28   IRQ_Handler
+        28   -- Indirect call
+       0   No_IRQ
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+       4  ??DataTable3
+       4  ??DataTable3_1
+       4  ??DataTable3_10
+       4  ??DataTable3_2
+       4  ??DataTable3_3
+       4  ??DataTable3_4
+       4  ??DataTable3_5
+       4  ??DataTable3_6
+       4  ??DataTable3_7
+       4  ??DataTable3_8
+       4  ??DataTable3_9
+      68  ?_0
+      80  ?_1
+      36  ?_2
+      22  INTC_Copy_Vector
+     106  INTC_IRQInstall
+     110  INTC_Init
+      34  INTC_IntEnable
+     172  IRQ_Handler
+     240  IntTbl
+       2  No_IRQ
+       4  _A_INT_PRIORITYMASK_0
+       4  _A_INT_PRIORITYMASK_1
+       4  _A_INT_REQUEST_1
+       4  _A_INT_VECTOR_0
+       4  _A_INT_VECTOR_1
+
+ 
+ 240 bytes in section .bss
+  20 bytes in section .noinit (abs)
+ 184 bytes in section .rodata
+ 490 bytes in section .text
+ 
+ 490 bytes of CODE  memory
+ 184 bytes of CONST memory
+ 240 bytes of DATA  memory (+ 20 bytes shared)
+
+Errors: none
+Warnings: none

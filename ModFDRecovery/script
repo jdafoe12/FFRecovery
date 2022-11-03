@@ -1,0 +1,2 @@
+sudo dd if=/dev/zero of=/dev/sdb bs=512 count=1 seek=951384
+sudo dd if=/dev/zero of=/dev/sdb bs=512 count=1 seek=951388

@@ -1,0 +1,1334 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        26/Oct/2022  20:51:02
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\sys\lpc313x\usb\usbcore.c
+#    Command line =  
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\sys\lpc313x\usb\usbcore.c" -D BOOT_LEVEL_2 -lcN
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\List" -o
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\Obj" --no_cse --no_unroll --no_inline
+#        --no_code_motion --no_tbaa --no_clustering --no_scheduling --debug
+#        --endian=little --cpu=ARM926EJ-S -e --fpu=None --dlib_config
+#        "C:\Program Files (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        "C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\prj\iar\..\..\"
+#        -I "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\" --cpu_mode thumb -Ol
+#        --use_c++_inline
+#    List file    =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\List\usbcore.lst
+#    Object file  =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\Obj\usbcore.o
+#
+###############################################################################
+
+C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\sys\lpc313x\usb\usbcore.c
+      1          /*---------------------------------------------------------------------------
+      2           *      U S B  -  K e r n e l
+      3           *---------------------------------------------------------------------------
+      4           * Name:    usbcore.c
+      5           * Purpose: USB Core Module
+      6           * Version: V1.20
+      7           *---------------------------------------------------------------------------
+      8           * This software is supplied "AS IS" without any warranties, express,
+      9           * implied or statutory, including but not limited to the implied
+     10           * warranties of fitness for purpose, satisfactory quality and
+     11           * noninfringement. Keil extends you a royalty-free right to reproduce
+     12           * and distribute executable files created using this software for use
+     13           * on NXP ARM microcontroller devices only. Nothing else gives
+     14           * you the right to use this software.
+     15           *
+     16           * Copyright (c) 2008 Keil - An ARM Crane Chu. All rights reserved.
+     17           * Adaption to LPCxxxx, Copyright (c) 2009 NXP.
+     18           *--------------------------------------------------------------------------*/
+     19          
+     20          #include "lpc_usb.h"
+     21          #include "usbcfg.h"
+     22          #include "usbhw.h"
+     23          #include "usbcore.h"
+     24          #include "usbdesc.h"
+     25          #include "usbuser.h"
+     26          
+     27          #if (USB_CLASS)
+     28          
+     29          #if (USB_AUDIO)
+     30          #include "audio.h"
+     31          #include "adcuser.h"
+     32          #endif
+     33          
+     34          #if (USB_HID)
+     35          #include "hid.h"
+     36          #include "hiduser.h"
+     37          #endif
+     38          
+     39          #if (USB_MSC)
+     40          #include "msc.h"
+     41          #include "mscuser.h"
+     42          extern MSC_CSW CSW;
+     43          #endif
+     44          
+     45          #if (USB_CDC)
+     46          #include "cdc.h"
+     47          #include "cdcuser.h"
+     48          #endif
+     49          
+     50          #endif
+     51          
+     52          #if (USB_VENDOR)
+     53          #include "vendor.h"
+     54          #endif
+     55          
+     56          UNS_16 USB_DeviceStatus;
+     57          UNS_8 USB_DeviceAddress;
+     58          UNS_8 USB_Configuration;
+     59          UNS_32 USB_EndPointMask;
+     60          UNS_32 USB_EndPointHalt;
+     61          UNS_32 USB_EndPointStall;
+     62          ;
+     63          UNS_8 USB_NumInterfaces;
+     64          UNS_8 USB_AltSetting[USB_IF_NUM];
+     65          
+     66          USB_EP_DATA EP0Data;
+     67          
+     68          #pragma data_alignment=32
+     69          UNS_8 EP0Buf[USB_MAX_PACKET0];
+     70          
+     71          #pragma data_alignment=4
+     72          USB_SETUP_PACKET SetupPacket;
+     73          
+     74          extern volatile UNS_32 DevStatusFS2HS;
+     75          
+     76          /*
+     77           *  Reset USB Core
+     78           *    Parameters:      None
+     79           *    Return Value:    None
+     80           */
+     81          
+     82          void USB_ResetCore(void) {
+     83            USB_DeviceStatus = USB_POWER;
+     84            USB_DeviceAddress = 0;
+     85            USB_Configuration = 0;
+     86            USB_EndPointMask = USB_EP_MASK;
+     87            USB_EndPointHalt = 0x00000000;
+     88            USB_EndPointStall = 0x00000000;
+     89          }
+     90          
+     91          /*
+     92           *  USB Request - Setup Stage
+     93           *    Parameters:      None (global SetupPacket)
+     94           *    Return Value:    None
+     95           */
+     96          
+     97          void USB_SetupStage(void) {
+     98            USB_ReadSetupPkt(0x00, (UNS_32 *) &SetupPacket);
+     99          }
+    100          
+    101          /*
+    102           *  USB Request - Data In Stage
+    103           *    Parameters:      None (global EP0Data)
+    104           *    Return Value:    None
+    105           */
+    106          
+    107          void USB_DataInStage(void) {
+    108            UNS_32 cnt;
+    109          
+    110            if (EP0Data.Count > USB_MAX_PACKET0) {
+    111              cnt = USB_MAX_PACKET0;
+    112            } else {
+    113              cnt = EP0Data.Count;
+    114            }
+    115            cnt = USB_WriteEP(0x80, EP0Data.pData, cnt);
+    116            EP0Data.pData += cnt;
+    117            EP0Data.Count -= cnt;
+    118          }
+    119          
+    120          /*
+    121           *  USB Request - Data Out Stage
+    122           *    Parameters:      None (global EP0Data)
+    123           *    Return Value:    None
+    124           */
+    125          
+    126          void USB_DataOutStage(void) {
+    127            UNS_32 cnt;
+    128          
+    129            cnt = USB_ReadEP(0x00, EP0Data.pData);
+    130            EP0Data.pData += cnt;
+    131            EP0Data.Count -= cnt;
+    132          }
+    133          
+    134          /*
+    135           *  USB Request - Status In Stage
+    136           *    Parameters:      None
+    137           *    Return Value:    None
+    138           */
+    139          
+    140          void USB_StatusInStage(void) {
+    141            USB_WriteEP(0x80, NULL, 0);
+    142          }
+    143          
+    144          /*
+    145           *  USB Request - Status Out Stage
+    146           *    Parameters:      None
+    147           *    Return Value:    None
+    148           */
+    149          
+    150          void USB_StatusOutStage(void) {
+    151            USB_ReadEP(0x00, EP0Buf);
+    152          }
+    153          
+    154          /*
+    155           *  Get Status USB Request
+    156           *    Parameters:      None (global SetupPacket)
+    157           *    Return Value:    TRUE - Success, FALSE - Error
+    158           */
+    159          
+    160          #pragma inline
+    161          BOOL_32 USB_ReqGetStatus(void) {
+    162            UNS_32 n, m;
+    163          
+    164            switch (SetupPacket.bmRequestType.BM.Recipient) {
+    165              case REQUEST_TO_DEVICE:
+    166                EP0Data.pData = (UNS_8 *) &USB_DeviceStatus;
+    167                break;
+    168              case REQUEST_TO_INTERFACE:
+    169                if ((USB_Configuration != 0)
+    170                    && (SetupPacket.wIndex.WB.L < USB_NumInterfaces)) {
+    171                  EP0Buf[0] = 0;
+    172                  EP0Buf[1] = 0;
+    173                  EP0Data.pData = EP0Buf;
+    174                } else {
+    175                  return (FALSE);
+    176                }
+    177                break;
+    178              case REQUEST_TO_ENDPOINT:
+    179                n = SetupPacket.wIndex.WB.L & 0x8F;
+    180                m = (n & 0x80) ? ((1 << 16) << (n & 0x0F)) : (1 << n);
+    181                if (((USB_Configuration != 0) || ((n & 0x0F) == 0))
+    182                    && (USB_EndPointMask & m)) {
+    183                  EP0Buf[0] = (USB_EndPointHalt & m) ? 1 : 0;
+    184                  EP0Buf[1] = 0;
+    185                  EP0Data.pData = EP0Buf;
+    186                } else {
+    187                  return (FALSE);
+    188                }
+    189                break;
+    190              default:
+    191                return (FALSE);
+    192            }
+    193            return (TRUE);
+    194          }
+    195          
+    196          /*
+    197           *  Set/Clear Feature USB Request
+    198           *    Parameters:      sc:    0 - Clear, 1 - Set
+    199           *                            (global SetupPacket)
+    200           *    Return Value:    TRUE - Success, FALSE - Error
+    201           */
+    202          
+    203          #pragma inline
+    204          BOOL_32 USB_ReqSetClrFeature(UNS_32 sc) {
+    205            UNS_32 n, m;
+    206          
+    207            switch (SetupPacket.bmRequestType.BM.Recipient) {
+    208              case REQUEST_TO_DEVICE:
+    209                if (SetupPacket.wValue.W == USB_FEATURE_REMOTE_WAKEUP) {
+    210                  if (sc) {
+    211                    USB_WakeUpCfg(TRUE);
+    212                    USB_DeviceStatus |= USB_GETSTATUS_REMOTE_WAKEUP;
+    213                  } else {
+    214                    USB_WakeUpCfg(FALSE);
+    215                    USB_DeviceStatus &= ~USB_GETSTATUS_REMOTE_WAKEUP;
+    216                  }
+    217                } else if (SetupPacket.wValue.W == USB_FEATURE_TEST_MODE) {
+    218                  return USB_SetTestMode(SetupPacket.wIndex.WB.H);
+    219                } else {
+    220                  return (FALSE);
+    221                }
+    222                break;
+    223              case REQUEST_TO_INTERFACE:
+    224                return (FALSE);
+    225              case REQUEST_TO_ENDPOINT:
+    226                n = SetupPacket.wIndex.WB.L & 0x8F;
+    227                m = (n & 0x80) ? ((1 << 16) << (n & 0x0F)) : (1 << n);
+    228                if ((USB_Configuration != 0) && ((n & 0x0F) != 0)
+    229                    && (USB_EndPointMask & m)) {
+    230                  if (SetupPacket.wValue.W == USB_FEATURE_ENDPOINT_STALL) {
+    231                    if (sc) {
+    232                      USB_SetStallEP(n);
+    233                      USB_EndPointHalt |= m;
+    234                    } else {
+    235                      if ((USB_EndPointStall & m) != 0) {
+    236                        return (TRUE);
+    237                      }
+    238                      USB_ClrStallEP(n);
+    239          #if (USB_MSC)
+    240                      if ((n == MSC_EP_IN) && ((USB_EndPointHalt & m) != 0)) {
+    241                        /* Compliance Test: rewrite CSW after unstall */
+    242                        if (CSW.dSignature == MSC_CSW_Signature) {
+    243                          USB_WriteEP(MSC_EP_IN, (UNS_8 *) &CSW, sizeof(CSW));
+    244                        }
+    245                      }
+    246          #endif
+    247                      USB_EndPointHalt &= ~m;
+    248                    }
+    249                  } else {
+    250                    return (FALSE);
+    251                  }
+    252                } else {
+    253                  return (FALSE);
+    254                }
+    255                break;
+    256              default:
+    257                return (FALSE);
+    258            }
+    259            return (TRUE);
+    260          }
+    261          
+    262          /*
+    263           *  Set Address USB Request
+    264           *    Parameters:      None (global SetupPacket)
+    265           *    Return Value:    TRUE - Success, FALSE - Error
+    266           */
+    267          
+    268          #pragma inline
+    269          BOOL_32 USB_ReqSetAddress(void) {
+    270          
+    271            switch (SetupPacket.bmRequestType.BM.Recipient) {
+    272              case REQUEST_TO_DEVICE:
+    273                USB_DeviceAddress = 0x80 | SetupPacket.wValue.WB.L;
+    274                break;
+    275              default:
+    276                return (FALSE);
+    277            }
+    278            return (TRUE);
+    279          }
+    280          
+    281          /*
+    282           *  Get Descriptor USB Request
+    283           *    Parameters:      None (global SetupPacket)
+    284           *    Return Value:    TRUE - Success, FALSE - Error
+    285           */
+    286          
+    287          #pragma inline
+    288          BOOL_32 USB_ReqGetDescriptor(void) {
+    289            UNS_8 *pD;
+    290            UNS_32 len, n;
+    291          
+    292            switch (SetupPacket.bmRequestType.BM.Recipient) {
+    293              case REQUEST_TO_DEVICE:
+    294                switch (SetupPacket.wValue.WB.H) {
+    295                  case USB_DEVICE_DESCRIPTOR_TYPE:
+    296                    EP0Data.pData = (UNS_8 *) USB_DeviceDescriptor;
+    297                    len = USB_DEVICE_DESC_SIZE;
+    298                    break;
+    299                  case USB_CONFIGURATION_DESCRIPTOR_TYPE:
+    300                    if (DevStatusFS2HS == FALSE) {
+    301                      pD = (UNS_8 *) USB_FSConfigDescriptor;
+    302                    } else {
+    303                      pD = (UNS_8 *) USB_HSConfigDescriptor;
+    304                    }
+    305                    for (n = 0; n != SetupPacket.wValue.WB.L; n++) {
+    306                      if (((USB_CONFIGURATION_DESCRIPTOR *) pD)->bLength != 0) {
+    307                        pD += ((USB_CONFIGURATION_DESCRIPTOR *) pD)->wTotalLength;
+    308                      }
+    309                    }
+    310                    if (((USB_CONFIGURATION_DESCRIPTOR *) pD)->bLength == 0) {
+    311                      return (FALSE);
+    312                    }
+    313                    EP0Data.pData = pD;
+    314                    len = ((USB_CONFIGURATION_DESCRIPTOR *) pD)->wTotalLength;
+    315                    break;
+    316                  case USB_STRING_DESCRIPTOR_TYPE:
+    317                    pD = (UNS_8 *) USB_StringDescriptor;
+    318                    for (n = 0; n != SetupPacket.wValue.WB.L; n++) {
+    319                      if (((USB_STRING_DESCRIPTOR *) pD)->bLength != 0) {
+    320                        pD += ((USB_STRING_DESCRIPTOR *) pD)->bLength;
+    321                      }
+    322                    }
+    323                    if (((USB_STRING_DESCRIPTOR *) pD)->bLength == 0) {
+    324                      return (FALSE);
+    325                    }
+    326                    EP0Data.pData = pD;
+    327                    len = ((USB_STRING_DESCRIPTOR *) pD)->bLength;
+    328                    break;
+    329                  case USB_DEVICE_QUALIFIER_DESCRIPTOR_TYPE:
+    330                    /* USB Chapter 9. page 9.6.2 */
+    331          #if (USB_FULL_SPEED_ONLY == 1)
+    332                    return (FALSE);
+    333          #else
+    334                    EP0Data.pData = (UNS_8 *) USB_DeviceQualifier;
+    335                    len = USB_DEVICE_QUALI_SIZE;
+    336                    break;
+    337                  case USB_OTHER_SPEED_CONFIG_DESCRIPTOR_TYPE:
+    338                    if (DevStatusFS2HS == TRUE) {
+    339                      pD = (UNS_8 *) USB_FSOtherSpeedConfiguration;
+    340                    } else {
+    341                      pD = (UNS_8 *) USB_HSOtherSpeedConfiguration;
+    342                    }
+    343          
+    344                    for (n = 0; n != SetupPacket.wValue.WB.L; n++) {
+    345                      if (((USB_OTHER_SPEED_CONFIGURATION *) pD)->bLength != 0) {
+    346                        pD += ((USB_OTHER_SPEED_CONFIGURATION *) pD)->wTotalLength;
+    347                      }
+    348                    }
+    349                    if (((USB_OTHER_SPEED_CONFIGURATION *) pD)->bLength == 0) {
+    350                      return (FALSE);
+    351                    }
+    352                    EP0Data.pData = pD;
+    353                    len = ((USB_OTHER_SPEED_CONFIGURATION *) pD)->wTotalLength;
+    354                    break;
+    355          #endif
+    356                  default:
+    357                    return (FALSE);
+    358                }
+    359                break;
+    360              case REQUEST_TO_INTERFACE:
+    361                switch (SetupPacket.wValue.WB.H) {
+    362          #if USB_HID
+    363                  case HID_HID_DESCRIPTOR_TYPE:
+    364                  if (SetupPacket.wIndex.WB.L != USB_HID_IF_NUM)
+    365                  {
+    366                    return (FALSE); /* Only Single HID Interface is supported */
+    367                  }
+    368                  if ( DevStatusFS2HS == FALSE )
+    369                  {
+    370                    EP0Data.pData = (UNS_8 *)USB_FSConfigDescriptor + HID_DESC_OFFSET;
+    371                  }
+    372                  else
+    373                  {
+    374                    EP0Data.pData = (UNS_8 *)USB_HSConfigDescriptor + HID_DESC_OFFSET;
+    375                  }
+    376                  len = HID_DESC_SIZE;
+    377                  break;
+    378                  case HID_REPORT_DESCRIPTOR_TYPE:
+    379                  if (SetupPacket.wIndex.WB.L != USB_HID_IF_NUM)
+    380                  {
+    381                    return (FALSE); /* Only Single HID Interface is supported */
+    382                  }
+    383                  EP0Data.pData = (UNS_8 *)HID_ReportDescriptor;
+    384                  len = HID_ReportDescSize;
+    385                  break;
+    386                  case HID_PHYSICAL_DESCRIPTOR_TYPE:
+    387                  return (FALSE); /* HID Physical Descriptor is not supported */
+    388          #endif
+    389                  default:
+    390                    return (FALSE);
+    391                }
+    392                break;
+    393              default:
+    394                return (FALSE);
+    395            }
+    396          
+    397            if (EP0Data.Count > len) {
+    398              EP0Data.Count = len;
+    399            }
+    400          
+    401            return (TRUE);
+    402          }
+    403          
+    404          /*
+    405           *  Get Configuration USB Request
+    406           *    Parameters:      None (global SetupPacket)
+    407           *    Return Value:    TRUE - Success, FALSE - Error
+    408           */
+    409          
+    410          #pragma inline
+    411          BOOL_32 USB_ReqGetConfiguration(void) {
+    412            switch (SetupPacket.bmRequestType.BM.Recipient) {
+    413              case REQUEST_TO_DEVICE:
+    414                EP0Data.pData = &USB_Configuration;
+    415                break;
+    416              default:
+    417                return (FALSE);
+    418            }
+    419            return (TRUE);
+    420          }
+    421          
+    422          /*
+    423           *  Set Configuration USB Request
+    424           *    Parameters:      None (global SetupPacket)
+    425           *    Return Value:    TRUE - Success, FALSE - Error
+    426           */
+    427          
+    428          #pragma inline
+    429          BOOL_32 USB_ReqSetConfiguration(void) {
+    430            USB_COMMON_DESCRIPTOR *pD;
+    431            UNS_32 alt = 0, n, m;
+    432            UNS_32 new_addr;
+    433            switch (SetupPacket.bmRequestType.BM.Recipient) {
+    434              case REQUEST_TO_DEVICE:
+    435          
+    436                if (SetupPacket.wValue.WB.L) {
+    437                  if (DevStatusFS2HS == FALSE) {
+    438                    pD = (USB_COMMON_DESCRIPTOR *) USB_FSConfigDescriptor;
+    439                  } else {
+    440                    pD = (USB_COMMON_DESCRIPTOR *) USB_HSConfigDescriptor;
+    441                  }
+    442                  while (pD->bLength) {
+    443                    switch (pD->bDescriptorType) {
+    444                      case USB_CONFIGURATION_DESCRIPTOR_TYPE:
+    445                        if (((USB_CONFIGURATION_DESCRIPTOR *) pD)->bConfigurationValue
+    446                            == SetupPacket.wValue.WB.L) {
+    447                          USB_Configuration = SetupPacket.wValue.WB.L;
+    448                          USB_NumInterfaces = ((USB_CONFIGURATION_DESCRIPTOR *) pD)
+    449                              ->bNumInterfaces;
+    450                          for (n = 0; n < USB_IF_NUM; n++) {
+    451                            USB_AltSetting[n] = 0;
+    452                          }
+    453                          for (n = 1; n < USB_EP_NUM; n++) {
+    454                            if (USB_EndPointMask & (1 << n)) {
+    455                              USB_DisableEP(n);
+    456                            }
+    457                            if (USB_EndPointMask & ((1 << 16) << n)) {
+    458                              USB_DisableEP(n | 0x80);
+    459                            }
+    460                          }
+    461                          USB_EndPointMask = USB_EP_MASK;
+    462                          USB_EndPointHalt = 0x00000000;
+    463                          USB_EndPointStall = 0x00000000;
+    464                          USB_Configure(TRUE);
+    465                          if (((USB_CONFIGURATION_DESCRIPTOR *) pD)->bmAttributes
+    466                              & USB_CONFIG_POWERED_MASK) {
+    467                            USB_DeviceStatus |= USB_GETSTATUS_SELF_POWERED;
+    468                          } else {
+    469                            USB_DeviceStatus &= ~USB_GETSTATUS_SELF_POWERED;
+    470                          }
+    471                        } else {
+    472                          new_addr = (UNS_32) pD
+    473                              + ((USB_CONFIGURATION_DESCRIPTOR *) pD)->wTotalLength;
+    474                          pD = (USB_COMMON_DESCRIPTOR*) new_addr;
+    475                          continue;
+    476                        }
+    477                        break;
+    478                      case USB_INTERFACE_DESCRIPTOR_TYPE:
+    479                        alt = ((USB_INTERFACE_DESCRIPTOR *) pD)->bAlternateSetting;
+    480                        break;
+    481                      case USB_ENDPOINT_DESCRIPTOR_TYPE:
+    482                        if (alt == 0) {
+    483                          n = ((USB_ENDPOINT_DESCRIPTOR *) pD)->bEndpointAddress & 0x8F;
+    484                          m = (n & 0x80) ? ((1 << 16) << (n & 0x0F)) : (1 << n);
+    485                          USB_EndPointMask |= m;
+    486                          USB_ConfigEP((USB_ENDPOINT_DESCRIPTOR *) pD);
+    487                          USB_EnableEP(n);
+    488                          USB_ResetEP(n);
+    489                        }
+    490                        break;
+    491                    }
+    492                    new_addr = (UNS_32) pD + pD->bLength;
+    493                    pD = (USB_COMMON_DESCRIPTOR*) new_addr;
+    494                  }
+    495                } else {
+    496                  USB_Configuration = 0;
+    497                  for (n = 1; n < USB_EP_NUM; n++) {
+    498                    if (USB_EndPointMask & (1 << n)) {
+    499                      USB_DisableEP(n);
+    500                    }
+    501                    if (USB_EndPointMask & ((1 << 16) << n)) {
+    502                      USB_DisableEP(n | 0x80);
+    503                    }
+    504                  }
+    505                  USB_EndPointMask = USB_EP_MASK;
+    506                  USB_EndPointHalt = 0x00000000;
+    507                  USB_EndPointStall = 0x00000000;
+    508                  USB_Configure(FALSE);
+    509                }
+    510          
+    511                if (USB_Configuration != SetupPacket.wValue.WB.L) {
+    512                  return (FALSE);
+    513                }
+    514                break;
+    515              default:
+    516                return (FALSE);
+    517            }
+    518            return (TRUE);
+    519          }
+    520          
+    521          /*
+    522           *  Get Interface USB Request
+    523           *    Parameters:      None (global SetupPacket)
+    524           *    Return Value:    TRUE - Success, FALSE - Error
+    525           */
+    526          
+    527          #pragma inline
+    528          BOOL_32 USB_ReqGetInterface(void) {
+    529            switch (SetupPacket.bmRequestType.BM.Recipient) {
+    530              case REQUEST_TO_INTERFACE:
+    531                if ((USB_Configuration != 0)
+    532                    && (SetupPacket.wIndex.WB.L < USB_NumInterfaces)) {
+    533                  EP0Data.pData = USB_AltSetting + SetupPacket.wIndex.WB.L;
+    534                } else {
+    535                  return (FALSE);
+    536                }
+    537                break;
+    538              default:
+    539                return (FALSE);
+    540            }
+    541            return (TRUE);
+    542          }
+    543          
+    544          /*
+    545           *  Set Interface USB Request
+    546           *    Parameters:      None (global SetupPacket)
+    547           *    Return Value:    TRUE - Success, FALSE - Error
+    548           */
+    549          
+    550          #pragma inline
+    551          BOOL_32 USB_ReqSetInterface(void) {
+    552            USB_COMMON_DESCRIPTOR *pD;
+    553            UNS_32 ifn = 0, alt = 0, old = 0, msk = 0, n, m;
+    554            UNS_32 set, new_addr;
+    555          
+    556            switch (SetupPacket.bmRequestType.BM.Recipient) {
+    557              case REQUEST_TO_INTERFACE:
+    558                if (USB_Configuration == 0)
+    559                  return (FALSE);
+    560                set = FALSE;
+    561                if (DevStatusFS2HS == FALSE) {
+    562                  pD = (USB_COMMON_DESCRIPTOR *) USB_FSConfigDescriptor;
+    563                } else {
+    564                  pD = (USB_COMMON_DESCRIPTOR *) USB_HSConfigDescriptor;
+    565                }
+    566                while (pD->bLength) {
+    567                  switch (pD->bDescriptorType) {
+    568                    case USB_CONFIGURATION_DESCRIPTOR_TYPE:
+    569                      if (((USB_CONFIGURATION_DESCRIPTOR *) pD)->bConfigurationValue
+    570                          != USB_Configuration) {
+    571                        new_addr = (UNS_32) pD
+    572                            + ((USB_CONFIGURATION_DESCRIPTOR *) pD)->wTotalLength;
+    573                        pD = (USB_COMMON_DESCRIPTOR*) new_addr;
+    574                        continue;
+    575                      }
+    576                      break;
+    577                    case USB_INTERFACE_DESCRIPTOR_TYPE:
+    578                      ifn = ((USB_INTERFACE_DESCRIPTOR *) pD)->bInterfaceNumber;
+    579                      alt = ((USB_INTERFACE_DESCRIPTOR *) pD)->bAlternateSetting;
+    580                      msk = 0;
+    581                      if ((ifn == SetupPacket.wIndex.WB.L)
+    582                          && (alt == SetupPacket.wValue.WB.L)) {
+    583                        set = TRUE;
+    584                        old = USB_AltSetting[ifn];
+    585                        USB_AltSetting[ifn] = (UNS_8) alt;
+    586                      }
+    587                      break;
+    588                    case USB_ENDPOINT_DESCRIPTOR_TYPE:
+    589                      if (ifn == SetupPacket.wIndex.WB.L) {
+    590                        n = ((USB_ENDPOINT_DESCRIPTOR *) pD)->bEndpointAddress & 0x8F;
+    591                        m = (n & 0x80) ? ((1 << 16) << (n & 0x0F)) : (1 << n);
+    592                        if (alt == SetupPacket.wValue.WB.L) {
+    593                          USB_EndPointMask |= m;
+    594                          USB_EndPointHalt &= ~m;
+    595                          USB_ConfigEP((USB_ENDPOINT_DESCRIPTOR *) pD);
+    596                          USB_EnableEP(n);
+    597                          USB_ResetEP(n);
+    598                          msk |= m;
+    599                        } else if ((alt == old) && ((msk & m) == 0)) {
+    600                          USB_EndPointMask &= ~m;
+    601                          USB_EndPointHalt &= ~m;
+    602                          USB_DisableEP(n);
+    603                        }
+    604                      }
+    605                      break;
+    606                  }
+    607                  new_addr = (UNS_32) pD + pD->bLength;
+    608                  pD = (USB_COMMON_DESCRIPTOR*) new_addr;
+    609                }
+    610                break;
+    611              default:
+    612                return (FALSE);
+    613            }
+    614          
+    615            return (set);
+    616          }
+    617          
+    618          /*
+    619           *  USB Endpoint 0 Event Callback
+    620           *    Parameter:       event
+    621           */
+    622          
+    623          void USB_EndPoint0(UNS_32 event) {
+    624          
+    625            switch (event) {
+    626              case USB_EVT_SETUP:
+    627                USB_SetupStage();
+    628                USB_DirCtrlEP(SetupPacket.bmRequestType.BM.Dir);
+    629                EP0Data.Count = SetupPacket.wLength; /* Number of bytes to transfer */
+    630          
+    631                switch (SetupPacket.bmRequestType.BM.Type) {
+    632          
+    633                  case REQUEST_STANDARD:
+    634                    switch (SetupPacket.bRequest) {
+    635          
+    636                      case USB_REQUEST_GET_STATUS:
+    637                        if (!USB_ReqGetStatus()) {
+    638                          goto stall_i;
+    639                        }
+    640                        USB_DataInStage();
+    641                        break;
+    642          
+    643                      case USB_REQUEST_CLEAR_FEATURE:
+    644                        if (!USB_ReqSetClrFeature(0)) {
+    645                          goto stall_i;
+    646                        }
+    647                        USB_StatusInStage();
+    648          #if USB_FEATURE_EVENT
+    649                        USB_Feature_Event();
+    650          #endif
+    651                        break;
+    652          
+    653                      case USB_REQUEST_SET_FEATURE:
+    654                        if (!USB_ReqSetClrFeature(1)) {
+    655                          goto stall_i;
+    656                        }
+    657                        USB_StatusInStage();
+    658          #if USB_FEATURE_EVENT
+    659                        USB_Feature_Event();
+    660          #endif
+    661                        break;
+    662          
+    663                      case USB_REQUEST_SET_ADDRESS:
+    664                        if (!USB_ReqSetAddress()) {
+    665                          goto stall_i;
+    666                        }
+    667                        USB_StatusInStage();
+    668                        break;
+    669          
+    670                      case USB_REQUEST_GET_DESCRIPTOR:
+    671                        if (!USB_ReqGetDescriptor()) {
+    672                          goto stall_i;
+    673                        }
+    674                        USB_DataInStage();
+    675                        break;
+    676          
+    677                      case USB_REQUEST_SET_DESCRIPTOR:
+    678                        /*stall_o:*/
+    679                        USB_SetStallEP(0x00); /* not supported */
+    680                        EP0Data.Count = 0;
+    681                        break;
+    682          
+    683                      case USB_REQUEST_GET_CONFIGURATION:
+    684                        if (!USB_ReqGetConfiguration()) {
+    685                          goto stall_i;
+    686                        }
+    687                        USB_DataInStage();
+    688                        break;
+    689          
+    690                      case USB_REQUEST_SET_CONFIGURATION:
+    691                        if (!USB_ReqSetConfiguration()) {
+    692                          goto stall_i;
+    693                        }
+    694                        USB_StatusInStage();
+    695          #if USB_CONFIGURE_EVENT
+    696                        USB_Configure_Event();
+    697          #endif
+    698                        break;
+    699          
+    700                      case USB_REQUEST_GET_INTERFACE:
+    701                        if (!USB_ReqGetInterface()) {
+    702                          goto stall_i;
+    703                        }
+    704                        USB_DataInStage();
+    705                        break;
+    706          
+    707                      case USB_REQUEST_SET_INTERFACE:
+    708                        if (!USB_ReqSetInterface()) {
+    709                          goto stall_i;
+    710                        }
+    711                        USB_StatusInStage();
+    712          #if USB_INTERFACE_EVENT
+    713                        USB_Interface_Event();
+    714          #endif
+    715                        break;
+    716          
+    717                      default:
+    718                        goto stall_i;
+    719                    }
+    720                    break; /* end case REQUEST_STANDARD */
+    721          
+    722          #if USB_CLASS
+    723                  case REQUEST_CLASS:
+    724                    switch (SetupPacket.bmRequestType.BM.Recipient) {
+    725          
+    726                      case REQUEST_TO_DEVICE:
+    727                        goto stall_i;
+    728                        /* not supported */
+    729          
+    730                      case REQUEST_TO_INTERFACE:
+    731          #if USB_HID
+    732                        if (SetupPacket.wIndex.WB.L == USB_HID_IF_NUM) /* IF number correct? */
+    733                        {
+    734                          switch (SetupPacket.bRequest)
+    735                          {
+    736                            case HID_REQUEST_GET_REPORT:
+    737                            if (HID_GetReport())
+    738                            {
+    739                              EP0Data.pData = EP0Buf; /* point to data to be sent */
+    740                              USB_DataInStage(); /* send requested data */
+    741                              goto setup_class_ok;
+    742                            }
+    743                            break;
+    744                            case HID_REQUEST_SET_REPORT:
+    745                            EP0Data.pData = EP0Buf; /* data to be received */
+    746                            goto setup_class_ok;
+    747                            case HID_REQUEST_GET_IDLE:
+    748                            if (HID_GetIdle())
+    749                            {
+    750                              EP0Data.pData = EP0Buf; /* point to data to be sent */
+    751                              USB_DataInStage(); /* send requested data */
+    752                              goto setup_class_ok;
+    753                            }
+    754                            break;
+    755                            case HID_REQUEST_SET_IDLE:
+    756                            if (HID_SetIdle())
+    757                            {
+    758                              USB_StatusInStage(); /* send Acknowledge */
+    759                              goto setup_class_ok;
+    760                            }
+    761                            break;
+    762                            case HID_REQUEST_GET_PROTOCOL:
+    763                            if (HID_GetProtocol())
+    764                            {
+    765                              EP0Data.pData = EP0Buf; /* point to data to be sent */
+    766                              USB_DataInStage(); /* send requested data */
+    767                              goto setup_class_ok;
+    768                            }
+    769                            break;
+    770                            case HID_REQUEST_SET_PROTOCOL:
+    771                            if (HID_SetProtocol())
+    772                            {
+    773                              USB_StatusInStage(); /* send Acknowledge */
+    774                              goto setup_class_ok;
+    775                            }
+    776                            break;
+    777                          }
+    778                        }
+    779          #endif  /* USB_HID */
+    780          #if USB_MSC
+    781                        if (SetupPacket.wIndex.WB.L == USB_MSC_IF_NUM) /* IF number correct? */
+    782                        {
+    783                          switch (SetupPacket.bRequest) {
+    784                            case MSC_REQUEST_RESET:
+    785                              if ((SetupPacket.wValue.W == 0) && /* RESET with invalid parameters -> STALL */
+    786                              (SetupPacket.wLength == 0)) {
+    787                                if (MSC_Reset()) {
+    788                                  USB_StatusInStage();
+    789                                  goto setup_class_ok;
+    790                                }
+    791                              }
+    792                              break;
+    793                            case MSC_REQUEST_GET_MAX_LUN:
+    794                              if ((SetupPacket.wValue.W == 0) && /* GET_MAX_LUN with invalid parameters -> STALL */
+    795                              (SetupPacket.wLength == 1)) {
+    796                                if (MSC_GetMaxLUN()) {
+    797                                  EP0Data.pData = EP0Buf;
+    798                                  USB_DataInStage();
+    799                                  goto setup_class_ok;
+    800                                }
+    801                              }
+    802                              break;
+    803                          }
+    804                        }
+    805          #endif  /* USB_MSC */
+    806          #if USB_AUDIO
+    807                        if ((SetupPacket.wIndex.WB.L == USB_ADC_CIF_NUM) || /* IF number correct? */
+    808                            (SetupPacket.wIndex.WB.L == USB_ADC_SIF1_NUM) ||
+    809                            (SetupPacket.wIndex.WB.L == USB_ADC_SIF2_NUM))
+    810                        {
+    811                          switch (SetupPacket.bRequest)
+    812                          {
+    813                            case AUDIO_REQUEST_GET_CUR:
+    814                            case AUDIO_REQUEST_GET_MIN:
+    815                            case AUDIO_REQUEST_GET_MAX:
+    816                            case AUDIO_REQUEST_GET_RES:
+    817                            if (ADC_IF_GetRequest())
+    818                            {
+    819                              EP0Data.pData = EP0Buf; /* point to data to be sent */
+    820                              USB_DataInStage(); /* send requested data */
+    821                              goto setup_class_ok;
+    822                            }
+    823                            break;
+    824                            case AUDIO_REQUEST_SET_CUR:
+    825          //                case AUDIO_REQUEST_SET_MIN:
+    826          //                case AUDIO_REQUEST_SET_MAX:
+    827          //                case AUDIO_REQUEST_SET_RES:
+    828                            EP0Data.pData = EP0Buf; /* data to be received */
+    829                            goto setup_class_ok;
+    830                          }
+    831                        }
+    832          #endif  /* USB_AUDIO */
+    833          #if USB_CDC
+    834                        if ((SetupPacket.wIndex.WB.L == USB_CDC_CIF_NUM) || /* IF number correct? */
+    835                            (SetupPacket.wIndex.WB.L == USB_CDC_DIF_NUM))
+    836                        {
+    837                          switch (SetupPacket.bRequest)
+    838                          {
+    839                            case CDC_SEND_ENCAPSULATED_COMMAND:
+    840                            EP0Data.pData = EP0Buf; /* data to be received, see USB_EVT_OUT */
+    841                            goto setup_class_ok;
+    842                            case CDC_GET_ENCAPSULATED_RESPONSE:
+    843                            if (CDC_GetEncapsulatedResponse())
+    844                            {
+    845                              EP0Data.pData = EP0Buf; /* point to data to be sent */
+    846                              USB_DataInStage(); /* send requested data */
+    847                              goto setup_class_ok;
+    848                            }
+    849                            break;
+    850                            case CDC_SET_COMM_FEATURE:
+    851                            EP0Data.pData = EP0Buf; /* data to be received, see USB_EVT_OUT */
+    852                            goto setup_class_ok;
+    853                            case CDC_GET_COMM_FEATURE:
+    854                            if (CDC_GetCommFeature(SetupPacket.wValue.W))
+    855                            {
+    856                              EP0Data.pData = EP0Buf; /* point to data to be sent */
+    857                              USB_DataInStage(); /* send requested data */
+    858                              goto setup_class_ok;
+    859                            }
+    860                            break;
+    861                            case CDC_CLEAR_COMM_FEATURE:
+    862                            if (CDC_ClearCommFeature(SetupPacket.wValue.W))
+    863                            {
+    864                              USB_StatusInStage(); /* send Acknowledge */
+    865                              goto setup_class_ok;
+    866                            }
+    867                            break;
+    868                            case CDC_SET_LINE_CODING:
+    869                            EP0Data.pData = EP0Buf; /* data to be received, see USB_EVT_OUT */
+    870                            goto setup_class_ok;
+    871                            case CDC_GET_LINE_CODING:
+    872                            if (CDC_GetLineCoding())
+    873                            {
+    874                              EP0Data.pData = EP0Buf; /* point to data to be sent */
+    875                              USB_DataInStage(); /* send requested data */
+    876                              goto setup_class_ok;
+    877                            }
+    878                            break;
+    879                            case CDC_SET_CONTROL_LINE_STATE:
+    880                            if (CDC_SetControlLineState(SetupPacket.wValue.W))
+    881                            {
+    882                              USB_StatusInStage(); /* send Acknowledge */
+    883                              goto setup_class_ok;
+    884                            }
+    885                            break;
+    886                            case CDC_SEND_BREAK:
+    887                            if (CDC_SendBreak(SetupPacket.wValue.W))
+    888                            {
+    889                              USB_StatusInStage(); /* send Acknowledge */
+    890                              goto setup_class_ok;
+    891                            }
+    892                            break;
+    893                          }
+    894                        }
+    895          #endif  /* USB_CDC */
+    896                        goto stall_i;
+    897                        /* not supported */
+    898                        /* end case REQUEST_TO_INTERFACE */
+    899          
+    900                      case REQUEST_TO_ENDPOINT:
+    901          #if USB_AUDIO
+    902                        switch (SetupPacket.bRequest)
+    903                        {
+    904                          case AUDIO_REQUEST_GET_CUR:
+    905                          case AUDIO_REQUEST_GET_MIN:
+    906                          case AUDIO_REQUEST_GET_MAX:
+    907                          case AUDIO_REQUEST_GET_RES:
+    908                          if (ADC_EP_GetRequest())
+    909                          {
+    910                            EP0Data.pData = EP0Buf; /* point to data to be sent */
+    911                            USB_DataInStage(); /* send requested data */
+    912                            goto setup_class_ok;
+    913                          }
+    914                          break;
+    915                          case AUDIO_REQUEST_SET_CUR:
+    916          //              case AUDIO_REQUEST_SET_MIN:
+    917          //              case AUDIO_REQUEST_SET_MAX:
+    918          //              case AUDIO_REQUEST_SET_RES:
+    919                          EP0Data.pData = EP0Buf; /* data to be received */
+    920                          goto setup_class_ok;
+    921                        }
+    922          #endif  /* USB_AUDIO */
+    923                        goto stall_i;
+    924                        /* end case REQUEST_TO_ENDPOINT */
+    925          
+    926                      default:
+    927                        goto stall_i;
+    928                    }
+    929                    setup_class_ok: /* request finished successfully */
+    930                    break; /* end case REQUEST_CLASS */
+    931          #endif  /* USB_CLASS */
+    932          
+    933          #if USB_VENDOR
+    934                    case REQUEST_VENDOR:
+    935                    switch (SetupPacket.bmRequestType.BM.Recipient)
+    936                    {
+    937          
+    938                      case REQUEST_TO_DEVICE:
+    939                      if (!USB_ReqVendorDev(TRUE))
+    940                      {
+    941                        goto stall_i; /* not supported */
+    942                      }
+    943                      break;
+    944          
+    945                      case REQUEST_TO_INTERFACE:
+    946                      if (!USB_ReqVendorIF(TRUE))
+    947                      {
+    948                        goto stall_i; /* not supported */
+    949                      }
+    950                      break;
+    951          
+    952                      case REQUEST_TO_ENDPOINT:
+    953                      if (!USB_ReqVendorEP(TRUE))
+    954                      {
+    955                        goto stall_i; /* not supported */
+    956                      }
+    957                      break;
+    958          
+    959                      default:
+    960                      goto stall_i;
+    961                    }
+    962          
+    963                    if (SetupPacket.wLength)
+    964                    {
+    965                      if (SetupPacket.bmRequestType.BM.Dir == REQUEST_DEVICE_TO_HOST)
+    966                      {
+    967                        USB_DataInStage();
+    968                      }
+    969                    }
+    970                    else
+    971                    {
+    972                      USB_StatusInStage();
+    973                    }
+    974          
+    975                    break; /* end case REQUEST_VENDOR */
+    976          #endif  /* USB_VENDOR */
+    977          
+    978                  default:
+    979                    stall_i: USB_SetStallEP(0x80);
+    980                    EP0Data.Count = 0;
+    981                    break;
+    982                }
+    983                break; /* end case USB_EVT_SETUP */
+    984          
+    985              case USB_EVT_OUT_NAK:
+    986                if (SetupPacket.bmRequestType.BM.Dir == 0) {
+    987                  USB_ReadReqEP(0x00, EP0Data.pData, EP0Data.Count);
+    988                } else {
+    989                  /* might be zero length pkt */
+    990                  USB_ReadReqEP(0x00, EP0Data.pData, 0);
+    991                }
+    992                break;
+    993              case USB_EVT_OUT:
+    994                if (SetupPacket.bmRequestType.BM.Dir == REQUEST_HOST_TO_DEVICE) {
+    995                  if (EP0Data.Count) /* still data to receive ? */
+    996                  {
+    997                    USB_DataOutStage(); /* receive data */
+    998                    if (EP0Data.Count == 0) /* data complete ? */
+    999                    {
+   1000                      switch (SetupPacket.bmRequestType.BM.Type) {
+   1001          
+   1002                        case REQUEST_STANDARD:
+   1003                          goto stall_i;
+   1004                          /* not supported */
+   1005          
+   1006          #if (USB_CLASS)
+   1007                        case REQUEST_CLASS:
+   1008                          switch (SetupPacket.bmRequestType.BM.Recipient) {
+   1009                            case REQUEST_TO_DEVICE:
+   1010                              goto stall_i;
+   1011                              /* not supported */
+   1012          
+   1013                            case REQUEST_TO_INTERFACE:
+   1014          #if USB_HID
+   1015                              if (SetupPacket.wIndex.WB.L == USB_HID_IF_NUM) /* IF number correct? */
+   1016                              {
+   1017                                switch (SetupPacket.bRequest)
+   1018                                {
+   1019                                  case HID_REQUEST_SET_REPORT:
+   1020                                  if (HID_SetReport())
+   1021                                  {
+   1022                                    USB_StatusInStage(); /* send Acknowledge */
+   1023                                    goto out_class_ok;
+   1024                                  }
+   1025                                  break;
+   1026                                }
+   1027                              }
+   1028          #endif  /* USB_HID */
+   1029          #if USB_AUDIO
+   1030                              if ((SetupPacket.wIndex.WB.L == USB_ADC_CIF_NUM) || /* IF number correct? */
+   1031                                  (SetupPacket.wIndex.WB.L == USB_ADC_SIF1_NUM) ||
+   1032                                  (SetupPacket.wIndex.WB.L == USB_ADC_SIF2_NUM))
+   1033                              {
+   1034                                switch (SetupPacket.bRequest)
+   1035                                {
+   1036                                  case AUDIO_REQUEST_SET_CUR:
+   1037          //                      case AUDIO_REQUEST_SET_MIN:
+   1038          //                      case AUDIO_REQUEST_SET_MAX:
+   1039          //                      case AUDIO_REQUEST_SET_RES:
+   1040                                  if (ADC_IF_SetRequest())
+   1041                                  {
+   1042                                    USB_StatusInStage(); /* send Acknowledge */
+   1043                                    goto out_class_ok;
+   1044                                  }
+   1045                                  break;
+   1046                                }
+   1047                              }
+   1048          #endif  /* USB_AUDIO */
+   1049          #if USB_CDC
+   1050                              if ((SetupPacket.wIndex.WB.L == USB_CDC_CIF_NUM) || /* IF number correct? */
+   1051                                  (SetupPacket.wIndex.WB.L == USB_CDC_DIF_NUM))
+   1052                              {
+   1053                                switch (SetupPacket.bRequest)
+   1054                                {
+   1055                                  case CDC_SEND_ENCAPSULATED_COMMAND:
+   1056                                  if (CDC_SendEncapsulatedCommand())
+   1057                                  {
+   1058                                    USB_StatusInStage(); /* send Acknowledge */
+   1059                                    goto out_class_ok;
+   1060                                  }
+   1061                                  break;
+   1062                                  case CDC_SET_COMM_FEATURE:
+   1063                                  if (CDC_SetCommFeature(SetupPacket.wValue.W))
+   1064                                  {
+   1065                                    USB_StatusInStage(); /* send Acknowledge */
+   1066                                    goto out_class_ok;
+   1067                                  }
+   1068                                  break;
+   1069                                  case CDC_SET_LINE_CODING:
+   1070                                  if (CDC_SetLineCoding())
+   1071                                  {
+   1072                                    USB_StatusInStage(); /* send Acknowledge */
+   1073                                    goto out_class_ok;
+   1074                                  }
+   1075                                  break;
+   1076                                }
+   1077                              }
+   1078          #endif  /* USB_CDC */
+   1079                              goto stall_i;
+   1080                              /* end case REQUEST_TO_INTERFACE */
+   1081          
+   1082                            case REQUEST_TO_ENDPOINT:
+   1083          #if USB_AUDIO
+   1084                              switch (SetupPacket.bRequest)
+   1085                              {
+   1086                                case AUDIO_REQUEST_SET_CUR:
+   1087          //                    case AUDIO_REQUEST_SET_MIN:
+   1088          //                    case AUDIO_REQUEST_SET_MAX:
+   1089          //                    case AUDIO_REQUEST_SET_RES:
+   1090                                if (ADC_EP_SetRequest())
+   1091                                {
+   1092                                  USB_StatusInStage(); /* send Acknowledge */
+   1093                                  goto out_class_ok;
+   1094                                }
+   1095                                break;
+   1096                              }
+   1097          #endif  /* USB_AUDIO */
+   1098                              goto stall_i;
+   1099                              /* end case REQUEST_TO_ENDPOINT */
+   1100          
+   1101                            default:
+   1102                              goto stall_i;
+   1103                          }
+   1104          #if (USB_AUDIO || USB_CDC || USB_HID)
+   1105                          out_class_ok:
+   1106          #endif
+   1107                          /* request finished successfully *//* request finished successfully */
+   1108                          break; /* end case REQUEST_CLASS */
+   1109          #endif  /* USB_CLASS */
+   1110          
+   1111          #if USB_VENDOR
+   1112                          case REQUEST_VENDOR:
+   1113                          switch (SetupPacket.bmRequestType.BM.Recipient)
+   1114                          {
+   1115          
+   1116                            case REQUEST_TO_DEVICE:
+   1117                            if (!USB_ReqVendorDev(FALSE))
+   1118                            {
+   1119                              goto stall_i; /* not supported */
+   1120                            }
+   1121                            break;
+   1122          
+   1123                            case REQUEST_TO_INTERFACE:
+   1124                            if (!USB_ReqVendorIF(FALSE))
+   1125                            {
+   1126                              goto stall_i; /* not supported */
+   1127                            }
+   1128                            break;
+   1129          
+   1130                            case REQUEST_TO_ENDPOINT:
+   1131                            if (!USB_ReqVendorEP(FALSE))
+   1132                            {
+   1133                              goto stall_i; /* not supported */
+   1134                            }
+   1135                            break;
+   1136          
+   1137                            default:
+   1138                            goto stall_i;
+   1139                          }
+   1140          
+   1141                          USB_StatusInStage();
+   1142          
+   1143                          break; /* end case REQUEST_VENDOR */
+   1144          #endif  /* USB_VENDOR */
+   1145          
+   1146                        default:
+   1147                          goto stall_i;
+   1148                      }
+   1149                    }
+   1150                  }
+   1151                } else {
+   1152                  USB_StatusOutStage(); /* receive Acknowledge */
+   1153                }
+   1154                break; /* end case USB_EVT_OUT */
+   1155          
+   1156              case USB_EVT_IN:
+   1157                if (SetupPacket.bmRequestType.BM.Dir == REQUEST_DEVICE_TO_HOST) {
+   1158                  USB_DataInStage(); /* send data */
+   1159                } else {
+   1160                  if (USB_DeviceAddress & 0x80) {
+   1161                    USB_DeviceAddress &= 0x7F;
+   1162                    USB_SetAddress(USB_DeviceAddress);
+   1163                  }
+   1164                }
+   1165                break; /* end case USB_EVT_IN */
+   1166          
+   1167              case USB_EVT_OUT_STALL:
+   1168                USB_ClrStallEP(0x00);
+   1169                break;
+   1170          
+   1171              case USB_EVT_IN_STALL:
+   1172                USB_ClrStallEP(0x80);
+   1173                break;
+   1174          
+   1175            }
+   1176          }
+   1177          
+
+   Maximum stack usage in bytes:
+
+   .cstack Function
+   ------- --------
+       8   USB_DataInStage
+         8   -> USB_WriteEP
+       8   USB_DataOutStage
+         8   -> USB_ReadEP
+       8   USB_EndPoint0
+         8   -> MSC_GetMaxLUN
+         8   -> MSC_Reset
+         8   -> USB_ClrStallEP
+         8   -> USB_Configure_Event
+         8   -> USB_DataInStage
+         8   -> USB_DataOutStage
+         8   -> USB_DirCtrlEP
+         8   -> USB_ReadReqEP
+         8   -> USB_ReqGetConfiguration
+         8   -> USB_ReqGetDescriptor
+         8   -> USB_ReqGetInterface
+         8   -> USB_ReqGetStatus
+         8   -> USB_ReqSetAddress
+         8   -> USB_ReqSetClrFeature
+         8   -> USB_ReqSetConfiguration
+         8   -> USB_ReqSetInterface
+         8   -> USB_SetAddress
+         8   -> USB_SetStallEP
+         8   -> USB_SetupStage
+         8   -> USB_StatusInStage
+         8   -> USB_StatusOutStage
+       4   USB_ReqGetConfiguration
+       4   USB_ReqGetDescriptor
+       4   USB_ReqGetInterface
+       4   USB_ReqGetStatus
+       4   USB_ReqSetAddress
+      16   USB_ReqSetClrFeature
+        16   -> USB_ClrStallEP
+        16   -> USB_SetStallEP
+        16   -> USB_SetTestMode
+        16   -> USB_WakeUpCfg
+        16   -> USB_WriteEP
+        16 __aeabi_uread4
+      16   USB_ReqSetConfiguration
+        16   -> USB_ConfigEP
+        16   -> USB_Configure
+        16   -> USB_DisableEP
+        16   -> USB_EnableEP
+        16   -> USB_ResetEP
+      40   USB_ReqSetInterface
+        40   -> USB_ConfigEP
+        40   -> USB_DisableEP
+        40   -> USB_EnableEP
+        40   -> USB_ResetEP
+       0   USB_ResetCore
+       8   USB_SetupStage
+         8   -> USB_ReadSetupPkt
+       8   USB_StatusInStage
+         8   -> USB_WriteEP
+       8   USB_StatusOutStage
+         8   -> USB_ReadEP
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+       4  ??DataTable4
+       4  ??DataTable4_1
+       4  ??DataTable4_2
+       4  ??DataTable4_3
+       4  ??DataTable4_4
+       4  ??DataTable4_5
+       4  ??DataTable4_6
+       4  ??DataTable4_7
+       4  ??DataTable4_8
+       4  ??DataTable5
+       4  ??DataTable5_1
+       4  ??DataTable5_2
+       4  ??DataTable5_3
+      64  EP0Buf
+       8  EP0Data
+       8  SetupPacket
+       1  USB_AltSetting
+       1  USB_Configuration
+      52  USB_DataInStage
+      34  USB_DataOutStage
+       1  USB_DeviceAddress
+       2  USB_DeviceStatus
+     636  USB_EndPoint0
+       4  USB_EndPointHalt
+       4  USB_EndPointMask
+       4  USB_EndPointStall
+       1  USB_NumInterfaces
+      40  USB_ReqGetConfiguration
+     340  USB_ReqGetDescriptor
+      80  USB_ReqGetInterface
+     212  USB_ReqGetStatus
+      44  USB_ReqSetAddress
+     304  USB_ReqSetClrFeature
+     460  USB_ReqSetConfiguration
+     348  USB_ReqSetInterface
+      38  USB_ResetCore
+      12  USB_SetupStage
+      14  USB_StatusInStage
+      12  USB_StatusOutStage
+
+ 
+    98 bytes in section .bss
+ 2 678 bytes in section .text
+ 
+ 850 bytes of CODE memory (+ 1 828 bytes shared)
+  98 bytes of DATA memory
+
+Errors: none
+Warnings: none

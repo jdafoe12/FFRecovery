@@ -1,0 +1,668 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        26/Oct/2022  20:51:02
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\core\ubi\ubi_area.c
+#    Command line =  
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\core\ubi\ubi_area.c" -D BOOT_LEVEL_2 -lcN
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\List" -o
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\Obj" --no_cse --no_unroll --no_inline
+#        --no_code_motion --no_tbaa --no_clustering --no_scheduling --debug
+#        --endian=little --cpu=ARM926EJ-S -e --fpu=None --dlib_config
+#        "C:\Program Files (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        "C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\prj\iar\..\..\"
+#        -I "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\" --cpu_mode thumb -Ol
+#        --use_c++_inline
+#    List file    =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\List\ubi_area.lst
+#    Object file  =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\Obj\ubi_area.o
+#
+###############################################################################
+
+C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\core\ubi\ubi_area.c
+      1          /*********************************************************
+      2           * Module name: ubi_area.c
+      3           *
+      4           * Copyright 2010, 2011. All Rights Reserved, Crane Chu.
+      5           *
+      6           * This file is part of OpenNFM.
+      7           *
+      8           * OpenNFM is free software: you can redistribute it and/or 
+      9           * modify it under the terms of the GNU General Public 
+     10           * License as published by the Free Software Foundation, 
+     11           * either version 3 of the License, or (at your option) any 
+     12           * later version.
+     13           * 
+     14           * OpenNFM is distributed in the hope that it will be useful,
+     15           * but WITHOUT ANY WARRANTY; without even the implied 
+     16           * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR 
+     17           * PURPOSE. See the GNU General Public License for more 
+     18           * details.
+     19           *
+     20           * You should have received a copy of the GNU General Public 
+     21           * License along with OpenNFM. If not, see 
+     22           * <http://www.gnu.org/licenses/>.
+     23           *
+     24           * First written on 2010-01-01 by cranechu@gmail.com
+     25           *
+     26           * Module Description:
+     27           *    Manage area table in ram and nand.
+     28           *
+     29           *********************************************************/
+     30          
+     31          #include <core\inc\cmn.h>
+     32          #include <core\inc\mtd.h>
+     33          #include <sys\sys.h>
+     34          #include "ubi_inc.h"
+     35          
+     36          
+     37          typedef struct {
+     38            PHY_BLOCK physical_block;
+     39            ERASE_COUNT physical_block_ec;
+     40          } AREA_BLOCK; 
+     41          
+     42          
+     43          //jsjpenn
+     44          /* in var area */
+     45          
+     46          PAGE_OFF area_offset_table[AREA_TABLE_SIZE];//128
+     47          
+     48          //jsjpenn
+     49          
+     50          AREA_BLOCK cached_area_table[CFG_PHY_BLOCK_PER_AREA];//CFG_PHY_BLOCK_PER_AREA=256
+     51          
+     52          static AREA cached_area_number;
+     53          
+     54          
+     55          STATUS AREA_Init(AREA area_index) {
+     56            STATUS ret;
+     57          
+     58            /* check the type defination */
+     59            ASSERT(sizeof(PHY_BLOCK) == sizeof(ERASE_COUNT));
+     60            ASSERT(sizeof(PHY_BLOCK) == sizeof(PAGE_OFF));
+     61          
+     62            /* find the offset of the area table */
+     63            cached_area_number = INVALID_AREA;
+     64            area_offset_table[area_index] = INVALID_PAGE;
+     65            ret = AREA_Read(area_index);
+     66          
+     67            return ret;
+     68          }
+     69          
+     70          PHY_BLOCK AREA_Format(PHY_BLOCK block_count, PHY_BLOCK fmt_current_block,
+     71                                AREA area) {
+     72            UINT32 i;
+     73            STATUS ret = STATUS_SUCCESS;
+     74          
+     75            memset(&cached_area_table[0], 0xff, MPP_SIZE);
+     76          
+     77            /* check blocks, log bad block in anchor_table. Program AREA table */
+     78            for (i = 0; i < block_count; fmt_current_block++) {
+     79              if (fmt_current_block < CFG_LOG_BLOCK_COUNT) {
+     80                if (ANCHOR_IsBadBlock(fmt_current_block) == FALSE) {
+     81                  ret = MTD_Erase(fmt_current_block);
+     82                  if (ret != STATUS_SUCCESS) {
+     83                    /* mark bad block */
+     84                    ANCHOR_LogBadBlock(fmt_current_block);
+     85                  }
+     86                } else {
+     87                  ret = STATUS_BADBLOCK;
+     88                }
+     89              } else {
+     90                break;
+     91              }
+     92          
+     93              if (ret == STATUS_SUCCESS) {
+     94                /* good block, trace in zone table */
+     95                cached_area_table[i].physical_block = fmt_current_block;
+     96                cached_area_table[i].physical_block_ec = 0;
+     97                i++;
+     98              }
+     99            }
+    100             //把最后一个area的不足256块的剩余部分置为全ff
+    101            for (i = block_count; i < CFG_PHY_BLOCK_PER_AREA; i++) {
+    102              /* set all remaining invalid */
+    103              cached_area_table[i].physical_block = INVALID_BLOCK;
+    104              cached_area_table[i].physical_block_ec = INVALID_EC;
+    105            }
+    106          
+    107            /* write area table, with EC sector, check and erase block first */
+    108            if (ret == STATUS_SUCCESS) {
+    109              while (ANCHOR_IsBadBlock(fmt_current_block) == TRUE) {
+    110                fmt_current_block++;
+    111              }
+    112              ret = MTD_Erase(fmt_current_block);
+    113            }
+    114          
+    115            if (ret == STATUS_SUCCESS) {
+    116              ret = TABLE_Write(fmt_current_block, 0, &cached_area_table);
+    117           
+    118            }
+    119          
+    120            if (ret == STATUS_SUCCESS) {
+    121              /* log the area table in index */
+    122              index_table.area_index_table[area] = fmt_current_block;
+    123              index_table.area_index_ect[area] = 0;
+    124              /* log the area offset table */
+    125              area_offset_table[area] = 0;
+    126              fmt_current_block++;
+    127            } else {
+    128              /* mark bad block, pick another block for area table. */
+    129              ANCHOR_LogBadBlock(fmt_current_block);
+    130              fmt_current_block = INVALID_BLOCK;
+    131            }
+    132            return fmt_current_block;
+    133          }
+    134          
+    135          BOOL AREA_IsFull(PHY_BLOCK logical_block) {
+    136            STATUS status;
+    137            BOOL ret = FALSE;
+    138            AREA area = AREA_INDEX(logical_block);
+    139          
+    140            status = AREA_Read(area);
+    141            if (status == STATUS_SUCCESS) {
+    142              /* offset is the current offset, so, -1 */
+    143              //判断该area的area block页是否已用完
+    144              if (area_offset_table[area] == PAGE_PER_PHY_BLOCK - 1) {
+    145                ret = TRUE;
+    146              }
+    147            }
+    148            return ret;
+    149          }
+    150          
+    151          BLOCK_OFF AREA_FindMinECBlock(AREA area, PHY_BLOCK* physical_block,
+    152                                        ERASE_COUNT* block_ec) {
+    153            STATUS status;
+    154            BLOCK_OFF i;
+    155            BLOCK_OFF min_block_offset = 0;
+    156          
+    157            status = AREA_Read(area);
+    158            if (status == STATUS_SUCCESS) {
+    159              /* find the min ec block */
+    160              for (i = 0; i < CFG_PHY_BLOCK_PER_AREA; i++) {
+    161                if (cached_area_table[i].physical_block_ec
+    162                    < cached_area_table[min_block_offset].physical_block_ec) {
+    163                  min_block_offset = i;
+    164                }
+    165              }
+    166          
+    167              *physical_block = cached_area_table[min_block_offset].physical_block;
+    168              *block_ec = cached_area_table[min_block_offset].physical_block_ec;
+    169            }
+    170          
+    171            return min_block_offset;
+    172          }
+    173          
+    174          BOOL AREA_CheckUpdatePLR(PHY_BLOCK logical_block, PHY_BLOCK origin_block,
+    175                                   ERASE_COUNT block_ec) {
+    176            BOOL need_plr = FALSE;
+    177            BLOCK_OFF block_offset = BLOCK_OFFSET_AREA(logical_block);
+    178          
+    179            /* the area has already been cached in ram table */
+    180            if (cached_area_table[block_offset].physical_block == origin_block
+    181                && cached_area_table[block_offset].physical_block_ec == block_ec) {
+    182              /* no need to update the area table */
+    183              ;
+    184            } else {
+    185              /* the area table is not updated correctly for PL, continue updating */
+    186              cached_area_table[block_offset].physical_block = origin_block;
+    187              cached_area_table[block_offset].physical_block_ec = block_ec;
+    188              need_plr = TRUE;
+    189            }
+    190            return need_plr;
+    191          }
+    192          
+    193          STATUS AREA_Update(PHY_BLOCK logical_block, PHY_BLOCK new_origin_block,
+    194                             ERASE_COUNT new_origin_ec) {
+    195            AREA area;
+    196            BLOCK_OFF block;
+    197            PAGE_OFF page = INVALID_PAGE;
+    198            STATUS ret;
+    199          
+    200            block = BLOCK_OFFSET_AREA(logical_block);
+    201            area = AREA_INDEX(logical_block);
+    202          
+    203            ret = AREA_Read(area);
+    204            if (ret == STATUS_SUCCESS) {
+    205              if (new_origin_block != INVALID_BLOCK) {
+    206                cached_area_table[block].physical_block = new_origin_block;
+    207                cached_area_table[block].physical_block_ec = new_origin_ec;
+    208              }
+    209          
+    210              /* set the next area page offset */
+    211              page = (area_offset_table[area] + 1) % PAGE_PER_PHY_BLOCK;
+    212              ret = TABLE_Write(index_table.area_index_table[area], page,
+    213                                &cached_area_table);
+    214            }
+    215          
+    216            if (ret == STATUS_SUCCESS) {
+    217              ASSERT(page != INVALID_PAGE);
+    218              area_offset_table[area] = page;
+    219            } else if (ret == STATUS_BADBLOCK) {
+    220              /* bad block, set the offset to toggle reclaim of the area table block */
+    221              area_offset_table[area] = PAGE_PER_PHY_BLOCK - 1;
+    222              index_table.area_index_ect[area] = INVALID_EC;
+    223            }
+    224            return ret;
+    225          }
+    226          
+    227          /*
+    228          OUT: physical block index
+    229          IN: logic block index
+    230          */
+    231          PHY_BLOCK AREA_GetBlock(LOG_BLOCK logical_block) {
+    232            AREA area;
+    233            STATUS status;
+    234            PHY_BLOCK block;
+    235            PHY_BLOCK ret = INVALID_BLOCK;
+    236          
+    237            block = BLOCK_OFFSET_AREA(logical_block); // block identifes where is the entry of the mapping from the corresponding area table -- block % block per area
+    238            area = AREA_INDEX(logical_block); // area identifies where is the corresponding area table -- block / block per area
+    239          
+    240            //uart_printf("Log block: %d\nAreanum: %d\nBlocknum in area: %d\n\n\n", logical_block, area, block);
+    241            
+    242            // JD
+    243            if(ftl_read_state == 0) {
+    244            
+    245              status = AREA_Read(area);
+    246              if (status == STATUS_SUCCESS) {
+    247                ret = cached_area_table[block].physical_block;
+    248              }
+    249            }
+    250            else if(ftl_read_state == 1) {
+    251              LOG_BLOCK area_block = 55;
+    252              
+    253              ftl_read_state = 0;
+    254              ret = UBI_Read(area_block, area, &(cached_area_table[0]), NULL);
+    255              ftl_read_state = 1;
+    256              
+    257              ret = cached_area_table[block].physical_block;
+    258              return ret;
+    259              
+    260            }
+    261            // end JD
+    262          
+    263            return ret;
+    264          }
+    265          
+    266          ERASE_COUNT AREA_GetEC(PHY_BLOCK logical_block) {
+    267            AREA area;
+    268            STATUS status;
+    269            PHY_BLOCK block;
+    270            ERASE_COUNT ret = INVALID_EC;
+    271          
+    272            block = BLOCK_OFFSET_AREA(logical_block);
+    273            area = AREA_INDEX(logical_block);
+    274          
+    275            status = AREA_Read(area);
+    276            if (status == STATUS_SUCCESS) {
+    277              ret = cached_area_table[block].physical_block_ec;
+    278            }
+    279          
+    280            return ret;
+    281          }
+    282          
+    283          STATUS AREA_Read(AREA area) {
+    284            STATUS ret = STATUS_SUCCESS;
+    285          
+    286            if (area != cached_area_number) {
+    287              ASSERT(area != INVALID_AREA);
+    288              ret = TABLE_Read(index_table.area_index_table[area],
+    289                               &(area_offset_table[area]), &(cached_area_table[0]));
+    290            }
+    291            if (ret == STATUS_SUCCESS) {
+    292              cached_area_number = area;
+    293            } else {
+    294              cached_area_number = INVALID_AREA;
+    295            }
+    296            return ret;
+    297          }
+    298          
+    299          
+    300          //jsjpenn
+    301          STATUS UBI_MAPII_store() {
+    302            STATUS ret;
+    303            UINT8  i,areanum=AREA_COUNT;//总共16个area 
+    304            LOG_BLOCK block_to_write=55;//LEB。UBI_reserved_START_BLOCK =55
+    305            PAGE_OFF page_to_write;
+    306            
+    307            PHY_BLOCK block;   
+    308            block=AREA_GetBlock(block_to_write);//area table写入的物理块号
+    309            
+    310            for(i=0;i<areanum;i++){    
+    311            
+    312              page_to_write=i;    
+    313              
+    314              ret = AREA_Read(i);//将对应的area table读到cached_area_table[]
+    315              if(ret == STATUS_SUCCESS) {        
+    316                  ret=UBI_Write(block_to_write, page_to_write, &(cached_area_table[0]), NULL, FALSE);
+    317                  uart_printf("%s: write %d area table to %d page of PEB %d ok\r\n",__func__,i,i,block);        
+    318                }    
+    319            }
+    320            
+    321            if(ret == STATUS_SUCCESS) {
+    322              uart_printf("%s: Write all area table to %d PEB ok\r\n",__func__,block); //PEB block=62   
+    323            }
+    324            
+    325            return ret;
+    326          }
+    327          
+    328          
+    329          PHY_BLOCK ValidPEB[4096];//所有保存状态1的image有效数据的物理块号
+    330          UINT32  g_ValidPEBNum;
+    331          
+    332          
+    333          STATUS UBI_Valid_PEB( LOG_BLOCK *ValidLEBTable,UINT32 ValidLEBNum){
+    334            
+    335            STATUS ret=STATUS_SUCCESS;
+    336            UINT32 i,j;
+    337            LOG_BLOCK LEBtemp;
+    338            
+    339            g_ValidPEBNum=ValidLEBNum;
+    340            
+    341            for(i=0;i<g_ValidPEBNum;i++){    
+    342              LEBtemp=ValidLEBTable[i];    
+    343              ValidPEB[i] = AREA_GetBlock(LEBtemp);//获得LEB所对应的PEB    
+    344            }    
+    345          
+    346            //对ValidPEB进行冒泡排序，从小到大
+    347            for(i=0;i<g_ValidPEBNum;i++){    
+    348              for(j=0;j<g_ValidPEBNum-i-1;j++){               
+    349                if( ValidPEB[j]> ValidPEB[j+1]){
+    350                    LEBtemp= ValidPEB[j];
+    351                    ValidPEB[j]= ValidPEB[j+1];
+    352                    ValidPEB[j+1]=LEBtemp;        
+    353                }    
+    354              }   
+    355            }  
+    356            return ret;
+    357          }
+    358          
+    359          extern STATUS index_update();
+    360          
+    361          
+    362          STATUS UBI_MAPII_restore() { 
+    363            
+    364            STATUS ret;    
+    365            UINT8 i;
+    366            LOG_BLOCK block_stored_UBI=55;//UBI_reserved_START_BLOCK =55;
+    367            PAGE_OFF page_stored_MAPII;//写在0-15页
+    368            
+    369            //现在的area table信息
+    370            PHY_BLOCK now_area_block;
+    371            
+    372            //保存的area table信息
+    373            PHY_BLOCK stored_area_block;
+    374           
+    375            AREA_BLOCK tem_cached_area_table[CFG_PHY_BLOCK_PER_AREA];//256
+    376                 
+    377            
+    378            
+    379            //先将保存的index table读到临时变量中
+    380            PHY_BLOCK storePEB;   
+    381            storePEB=AREA_GetBlock(block_stored_UBI);//写入的物理块号
+    382            PAGE_OFF page_stored_INDEX=16;//写在16个area table之后，即第16页  
+    383            INDEX_TABLE tem_index_table;  //保存index table的临时变量 
+    384            ret=UBI_Read(block_stored_UBI, page_stored_INDEX, &tem_index_table, NULL);  
+    385            if(ret == STATUS_SUCCESS) {
+    386               uart_printf("%s: Read stored index table from %d PEB ok\r\n",__func__,storePEB);        
+    387            } 
+    388            
+    389           
+    390            
+    391            for(i=0;i<AREA_COUNT;i++){//总共16个area    
+    392              //读保存的MAPII到临时tem area table中 
+    393              page_stored_MAPII=i;
+    394              //以下读过程是基于现在的area table，而不是保存的area table    
+    395              ret =UBI_Read(block_stored_UBI, page_stored_MAPII, &(tem_cached_area_table[0]), NULL);//读LEB
+    396              
+    397              if(ret == STATUS_SUCCESS) {
+    398                stored_area_block=tem_index_table.area_index_table[i];//原保存的area table所在的PEB
+    399              
+    400                uart_printf("%s: Read the stored %d area block from %d page of PEB %d ok\r\n",__func__,i,i,storePEB);
+    401              }else{
+    402                uart_printf("%s: Read the stored %d area block failed\r\n",__func__,i);
+    403              }
+    404              
+    405               now_area_block=index_table.area_index_table[i];//现在的area table所在的PEB
+    406              //确保area block没有变
+    407               if(stored_area_block==now_area_block){
+    408                 uart_printf("%s: Area %d block is the same PEB=%d\r\n",__func__,i,stored_area_block);
+    409                 ret=STATUS_SUCCESS;
+    410               }else{       
+    411                 //通过修改INDEX_Update_Commit()函数保证各个area block的PEB不变，循环使用
+    412                 uart_printf("%s: ERROR: Area %d block has changed, need to do more\r\n",__func__,i);       
+    413               }
+    414              
+    415              
+    416              //判断现在的aera table所在块中的页是否用完,保证还可以继续写入保存的area table    
+    417              if(area_offset_table[i]== PAGE_PER_PHY_BLOCK - 1){//若用完
+    418                uart_printf("%s: Area table block %d is used up\r\n",__func__,i);
+    419                //将现在的area table先读出来        
+    420                ret =TABLE_Read(now_area_block, &(area_offset_table[i]), &(cached_area_table[0]));
+    421                if(ret == STATUS_SUCCESS) {
+    422                  cached_area_number=i;//全局变量，代表cached_area_table[]中存的area table号
+    423                  uart_printf("%s: Read the now %d area block ok\r\n",__func__,i);
+    424                  ret=MTD_Erase(now_area_block);//再将area block PEB物理擦除
+    425                  index_table.area_index_ect[i]++;
+    426                  if (ret == STATUS_SUCCESS) {//再将现在的area table写回去        
+    427                    ret=TABLE_Write(now_area_block, 0, &(cached_area_table[0])); 
+    428                    //更新所在页号
+    429                   if(ret == STATUS_SUCCESS) {        
+    430                     area_offset_table[i]= 0;      
+    431                     uart_printf("%s: Rewrite %d new area table ok\r\n",__func__,i);        
+    432                   }  
+    433                 }else{//若出现坏块，需增加其他逻辑
+    434                    uart_printf("%s:Warning-Bad area block in %d need to do more\r\n",__func__,i);
+    435                    ANCHOR_LogBadBlock(now_area_block);
+    436                  }    
+    437              }     
+    438            }
+    439              
+    440            //将保存的area table也写到area block中，但是先不改变area_offset_table[i]的值
+    441            //注意：写回各个UBI table不能用UBI_Write，要用table_write(),写到具体的物理块上 
+    442            if(ret == STATUS_SUCCESS) {
+    443              ret=TABLE_Write(now_area_block, area_offset_table[i]+1, &(tem_cached_area_table[0]));
+    444              if(ret == STATUS_SUCCESS) {
+    445               uart_printf("%s: Rewrite %d old area table to the %d page of PEB %d ok\r\n",__func__,i,area_offset_table[i]+1,now_area_block);
+    446              }  
+    447             }
+    448            
+    449           }
+    450            
+    451           
+    452            //注意,以上过程只是将保存的area table又写回了area block，但是还使用的是现在的aera table
+    453            //在更新完所有UBI和FTL表后，再更新area_offset_table[i]++
+    454           
+    455           return ret;   
+    456          }
+    457          
+    458          
+    459                
+    460          STATUS Truly_UBI_MAPII_restore() { 
+    461            
+    462            STATUS ret= STATUS_SUCCESS;
+    463             
+    464            UINT8 i; 
+    465            for(i=0;i<AREA_COUNT;i++){
+    466             
+    467             area_offset_table[i]++;
+    468             
+    469            }
+    470            uart_printf("%s:Truly restore old area table ok\r\n",__func__);
+    471           
+    472            return ret;   
+    473          }
+    474              
+
+   Maximum stack usage in bytes:
+
+   .cstack Function
+   ------- --------
+      16   AREA_CheckUpdatePLR
+        16 __aeabi_uidivmod
+      16   AREA_FindMinECBlock
+        16   -> AREA_Read
+      24   AREA_Format
+        24   -> ANCHOR_IsBadBlock
+        24   -> ANCHOR_LogBadBlock
+        24   -> MTD_Erase
+        24   -> TABLE_Write
+        24   -> __aeabi_memset
+      16   AREA_GetBlock
+        16   -> AREA_Read
+        16   -> UBI_Read
+        16 __aeabi_uidivmod
+      16   AREA_GetEC
+        16   -> AREA_Read
+        16 __aeabi_uidivmod
+       8   AREA_Init
+         8   -> AREA_Read
+      16   AREA_IsFull
+        16   -> AREA_Read
+       8   AREA_Read
+         8   -> TABLE_Read
+      24   AREA_Update
+        24   -> AREA_Read
+        24   -> TABLE_Write
+        24 __aeabi_uidivmod
+       8   Truly_UBI_MAPII_restore
+         8   -> uart_printf
+    4128   UBI_MAPII_restore
+      4128   -> ANCHOR_LogBadBlock
+      4128   -> AREA_GetBlock
+      4128   -> MTD_Erase
+      4128   -> TABLE_Read
+      4128   -> TABLE_Write
+      4128   -> UBI_Read
+      4128   -> uart_printf
+      32   UBI_MAPII_store
+        32   -> AREA_GetBlock
+        32   -> AREA_Read
+        32   -> UBI_Write
+        32   -> uart_printf
+      16   UBI_Valid_PEB
+        16   -> AREA_GetBlock
+      40   printint
+        40   -> UartWrite
+        40 __aeabi_uidiv
+        40 __aeabi_uidivmod
+      56   printuint
+        56   -> UartWrite
+        56 __aeabi_uidiv
+        56 __aeabi_uidivmod
+      40   uart_printf
+        40   -> UartWrite
+        40   -> printint
+        40   -> printuint
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+       4  ??DataTable10
+       4  ??DataTable10_1
+       4  ??DataTable11
+       4  ??DataTable13
+       4  ??DataTable13_1
+       4  ??DataTable13_2
+       4  ??DataTable14
+       4  ??DataTable14_1
+       4  ??DataTable14_2
+       4  ??DataTable15
+       4  ??DataTable15_1
+       4  ??DataTable15_10
+       4  ??DataTable15_11
+       4  ??DataTable15_12
+       4  ??DataTable15_13
+       4  ??DataTable15_14
+       4  ??DataTable15_15
+       4  ??DataTable15_16
+       4  ??DataTable15_17
+       4  ??DataTable15_18
+       4  ??DataTable15_19
+       4  ??DataTable15_2
+       4  ??DataTable15_20
+       4  ??DataTable15_21
+       4  ??DataTable15_3
+       4  ??DataTable15_4
+       4  ??DataTable15_5
+       4  ??DataTable15_6
+       4  ??DataTable15_7
+       4  ??DataTable15_8
+       4  ??DataTable15_9
+       4  ??DataTable6
+       4  ??DataTable7
+       4  ??DataTable9
+       4  ??DataTable9_1
+       8  ?_0
+      52  ?_1
+      36  ?_10
+      52  ?_11
+      60  ?_12
+      40  ?_13
+      40  ?_2
+      48  ?_3
+      64  ?_4
+      44  ?_5
+      40  ?_6
+      56  ?_7
+      40  ?_8
+      36  ?_9
+      66  AREA_CheckUpdatePLR
+      82  AREA_FindMinECBlock
+     254  AREA_Format
+     100  AREA_GetBlock
+      48  AREA_GetEC
+      32  AREA_Init
+      38  AREA_IsFull
+      72  AREA_Read
+     168  AREA_Update
+      60  Truly_UBI_MAPII_restore
+     494  UBI_MAPII_restore
+     128  UBI_MAPII_store
+     140  UBI_Valid_PEB
+   16384  ValidPEB
+     512  area_offset_table
+       4  cached_area_number
+    2048  cached_area_table
+      20  digits
+      20  digits
+       4  g_ValidPEBNum
+     104  printint
+      64  printuint
+     210  uart_printf
+      60  -- Other
+
+ 
+ 18 952 bytes in section .bss
+     40 bytes in section .data
+    676 bytes in section .rodata
+  2 200 bytes in section .text
+ 
+  2 200 bytes of CODE  memory
+    676 bytes of CONST memory
+ 18 992 bytes of DATA  memory
+
+Errors: none
+Warnings: 6

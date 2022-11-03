@@ -1,0 +1,345 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        26/Oct/2022  20:51:00
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\sys\lpc313x\csp\drv_spi.c
+#    Command line =  
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\sys\lpc313x\csp\drv_spi.c" -D BOOT_LEVEL_2 -lcN
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\List" -o
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\Obj" --no_cse --no_unroll --no_inline
+#        --no_code_motion --no_tbaa --no_clustering --no_scheduling --debug
+#        --endian=little --cpu=ARM926EJ-S -e --fpu=None --dlib_config
+#        "C:\Program Files (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        "C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\prj\iar\..\..\"
+#        -I "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\" --cpu_mode thumb -Ol
+#        --use_c++_inline
+#    List file    =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\List\drv_spi.lst
+#    Object file  =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\Obj\drv_spi.o
+#
+###############################################################################
+
+C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\sys\lpc313x\csp\drv_spi.c
+      1          /*************************************************************************
+      2           *
+      3           *   Used with ICCARM and AARM.
+      4           *
+      5           *    (c) Copyright IAR Systems 2008
+      6           *
+      7           *    File name   : drv_spi.c
+      8           *    Description : lpc313x SPI Driver
+      9           *
+     10           *    History :
+     11           *    1. Date        : 26.3.2009
+     12           *       Author      : Stoyan Choynev
+     13           *       Description : Initial Revision
+     14           *
+     15           *    $Revision: 33745 $
+     16           **************************************************************************/
+     17          
+     18          /** include files **/
+     19          #include "drv_spi.h"
+     20          /** local definitions **/
+     21          /** default settings **/
+     22          #define SPI_MAX_CLK_R   254*(1+255)
+     23          #define SPI_MIN_CLK_R   2
+     24          #define SPI_MAIN_CLOCK  90MHZ
+     25          
+     26          /** external functions **/
+     27          
+     28          /** external data **/
+     29          
+     30          /** internal functions **/
+     31          
+     32          /** public data **/
+     33          
+     34          /** private data **/
+     35          
+     36          /** public functions **/
+     37          /*************************************************************************
+     38           * Function Name: SPI_configure
+     39           * Parameters:SPI_CNFG * spi_cnfg
+     40           *
+     41           * Return: None
+     42           *
+     43           * Description: None
+     44           *
+     45           *************************************************************************/
+     46          void SPI_configure(SPI_CNFG * spi_cnfg) {
+     47            /*Reset SPI module*/
+     48            SPI_CONFIG_bit.SRST = 1;
+     49            /*Configure Inter Slave delay*/
+     50            SPI_CONFIG_bit.ISD = spi_cnfg->InterSlvDly;
+     51            /*Tnasmision Mode*/
+     52            SPI_CONFIG_bit.TM = spi_cnfg->T_Mode;
+     53            /*Loop Back mode*/
+     54            SPI_CONFIG_bit.LB = spi_cnfg->LB_Mode;
+     55            /*Master or slave mode*/
+     56            SPI_CONFIG_bit.MST = spi_cnfg->MS_Mode;
+     57            /*If Slave mode*/
+     58            if (spi_cnfg->MS_Mode)
+     59              SPI_SLAVE_ENABLE = 0; /*Clear Slave Enable*/
+     60          }
+     61          /*************************************************************************
+     62           * Function Name: Slave_configure
+     63           * Parameters:SLAVE_CNFG * Slave_cnfg
+     64           *
+     65           * Return: None
+     66           *
+     67           * Description: None
+     68           *
+     69           *************************************************************************/
+     70          void Slave_configure(SLAVE_CNFG * Slave_cnfg) {
+     71            Int32U * SlaveSetting1 = (Int32U *) (&SPI_SLV0_SETTINGS1
+     72                + (2 * Slave_cnfg->Slave));
+     73            Int32U * SlaveSetting2 = (Int32U *) (&SPI_SLV0_SETTINGS2
+     74                + (2 * Slave_cnfg->Slave));
+     75            /*configure clock Divisors*/
+     76            Int32U clock_ratio = (SPI_MAIN_CLOCK + Slave_cnfg->Clock / 2)
+     77                / Slave_cnfg->Clock;
+     78            Int32U div2, tmp = 0;
+     79          
+     80            /*Corect Clock Ratio*/
+     81            if (SPI_MIN_CLK_R > clock_ratio)
+     82              clock_ratio = SPI_MIN_CLK_R;
+     83            if (SPI_MAX_CLK_R < clock_ratio)
+     84              clock_ratio = SPI_MAX_CLK_R;
+     85            /*Set Clock Divisors*/
+     86            div2 = (((clock_ratio - 1) / 512) + 1) * 2;
+     87            tmp = ((clock_ratio + div2 / 2) / div2) - 1;
+     88            tmp |= div2 << 8;
+     89            /*Words in fifo for the slave*/
+     90            tmp |= (Slave_cnfg->NumberWords) << 16;
+     91            /*Delay*/
+     92            tmp |= Slave_cnfg->InterDly << 24;
+     93            *SlaveSetting1 = tmp;
+     94            tmp = 0;
+     95            /*Word trasfer size*/
+     96            tmp |= Slave_cnfg->WordSize;
+     97            /*Mode*/
+     98            tmp |= (Slave_cnfg->Mode) << 5;
+     99            /*Chip Select*/
+    100            tmp |= (Slave_cnfg->CS_Value) << 8;
+    101            tmp |= (Slave_cnfg->CS_Dly) << 9;
+    102            *SlaveSetting2 = tmp;
+    103          }
+    104          
+    105          /*************************************************************************
+    106           * Function Name: SPI_Enable
+    107           * Parameters:None
+    108           *
+    109           * Return: None
+    110           *
+    111           * Description: Enable SPI module
+    112           *
+    113           *************************************************************************/
+    114          void SPI_Enable(void) {
+    115            SPI_CONFIG_bit.ENA = 1;
+    116          }
+    117          /*************************************************************************
+    118           * Function Name: SPI_Disable
+    119           * Parameters:None
+    120           *
+    121           * Return: None
+    122           *
+    123           * Description: Disable SPI module
+    124           *
+    125           *************************************************************************/
+    126          void SPI_Disable(void) {
+    127            SPI_CONFIG_bit.ENA = 0;
+    128          }
+    129          
+    130          /*************************************************************************
+    131           * Function Name: Slave_update
+    132           * Parameters:Int32U update
+    133           *
+    134           * Return: None
+    135           *
+    136           * Description: write new value in Slave_eable and set
+    137           *              SPI Slave Update Bit
+    138           *************************************************************************/
+    139          void Slave_update(Int32U update) {
+    140            SPI_SLAVE_ENABLE_bit.SENA = update;
+    141            SPI_CONFIG_bit.UENA = 1;
+    142          }
+    143          
+    144          /*************************************************************************
+    145           * Function Name: SPI_read_fifo
+    146           * Parameters:SLAVE_ID Slave - Slave number
+    147           *             void *buffer  - buffer pointer
+    148           *             Int32U Words  - number of words
+    149           *
+    150           * Return: Int32U  - number of words
+    151           *
+    152           * Description: reads words from rx fifo
+    153           *
+    154           *************************************************************************/
+    155          Int32U SPI_read_fifo(SLAVE_ID Slave, void *buffer, Int32U Words) {
+    156            Int32U count = 0;
+    157            Int16U *data16 = NULL;
+    158            Int8U *data8 = NULL;
+    159            volatile __spi_slv_settings2_bits * SlaveSetting2 =
+    160                (__spi_slv_settings2_bits *) (&SPI_SLV0_SETTINGS2 + (2 * Slave));
+    161          
+    162            /*determine sample width */
+    163            if (8 < SlaveSetting2->WS) {
+    164              data16 = (Int16U *) buffer;
+    165            } else {
+    166              data8 = (Int8U *) buffer;
+    167            }
+    168            /* Loop until transmit ring buffer is full or until
+    169             expires */
+    170            while ((0 != Words) && (!SPI_STATUS_bit.rx_fifo_empty)) {
+    171              if (data16 == NULL) {
+    172                *data8 = (Int8U) SPI_FIFO_DATA;
+    173                data8++;
+    174              } else {
+    175                *data16 = (Int16U) SPI_FIFO_DATA;
+    176                data16++;
+    177              }
+    178          
+    179              /* Increment data count and decrement buffer size count */
+    180              count++;
+    181              Words--;
+    182            }
+    183          
+    184            return count;
+    185          }
+    186          /*************************************************************************
+    187           * Function Name: SPI_write_fifo
+    188           * Parameters:SLAVE_ID Slave - Slave number
+    189           *             void *buffer  - buffer pointer
+    190           *             Int32U Words  - number of words
+    191           *
+    192           * Return: Int32U  - number of words
+    193           *
+    194           * Description: writes words in tx fifo
+    195           *
+    196           *************************************************************************/
+    197          Int32U SPI_write_fifo(SLAVE_ID Slave, void *buffer, Int32U Words) {
+    198          
+    199            Int32U count = 0;
+    200            Int16U *data16 = NULL;
+    201            Int8U *data8 = NULL;
+    202            volatile __spi_slv_settings2_bits * SlaveSetting2 =
+    203                (__spi_slv_settings2_bits *) (&SPI_SLV0_SETTINGS2 + (2 * Slave));
+    204          
+    205            /*determine sample width */
+    206            if (8 < SlaveSetting2->WS) {
+    207              data16 = (Int16U *) buffer;
+    208            } else {
+    209              data8 = (Int8U *) buffer;
+    210            }
+    211            /* Loop until transmit ring buffer is full or until n_bytes
+    212             expires */
+    213            while ((0 != Words) && (!SPI_STATUS_bit.tx_fifo_full)) {
+    214              if (data16 == NULL) {
+    215                SPI_FIFO_DATA = (Int32U) *data8;
+    216                data8++;
+    217              } else {
+    218                SPI_FIFO_DATA = (Int32U) *data16;
+    219                data16++;
+    220              }
+    221          
+    222              /* Increment data count and decrement buffer size count */
+    223              count++;
+    224              Words--;
+    225            }
+    226          
+    227            return count;
+    228          }
+    229          
+    230          Int32U SPI_Get_Status(void) {
+    231            return SPI_STATUS;
+    232          }
+    233          
+    234          void SPI_rx_fifo_flush(void) {
+    235            volatile Int32U Dummy;
+    236          
+    237            while (!SPI_STATUS_bit.rx_fifo_empty) {
+    238              Dummy = SPI_FIFO_DATA;
+    239            }
+    240          }
+    241          
+    242          void SPI_tx_fifo_flush(void) {
+    243            SPI_TX_FIFO_FLUSH = 1;
+    244          }
+    245          
+    246          /** private functions **/
+
+   Maximum stack usage in bytes:
+
+   .cstack Function
+   ------- --------
+       0   SPI_Disable
+       0   SPI_Enable
+       0   SPI_Get_Status
+       4   SPI_configure
+      20   SPI_read_fifo
+       8   SPI_rx_fifo_flush
+       0   SPI_tx_fifo_flush
+      20   SPI_write_fifo
+      20   Slave_configure
+        20 __aeabi_uidiv
+       0   Slave_update
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+       4  ??DataTable9
+       4  ??DataTable9_1
+       4  ??DataTable9_2
+       4  ??DataTable9_3
+       4  ??DataTable9_4
+       4  ??DataTable9_5
+       4  ??DataTable9_6
+       4  ??DataTable9_7
+       4  ??DataTable9_8
+      14  SPI_Disable
+      14  SPI_Enable
+       4  SPI_FIFO_DATA
+       6  SPI_Get_Status
+     140  SPI_configure
+      86  SPI_read_fifo
+      26  SPI_rx_fifo_flush
+       8  SPI_tx_fifo_flush
+      86  SPI_write_fifo
+     156  Slave_configure
+      32  Slave_update
+       4  _A_SPI_CONFIG
+       4  _A_SPI_SLAVE_ENABLE
+       4  _A_SPI_SLV0_SETTINGS1
+       4  _A_SPI_SLV0_SETTINGS2
+       4  _A_SPI_STATUS
+       4  _A_SPI_TX_FIFO_FLUSH
+
+ 
+  28 bytes in section .noinit (abs)
+ 604 bytes in section .text
+ 
+ 604 bytes of CODE memory
+   0 bytes of DATA memory (+ 28 bytes shared)
+
+Errors: none
+Warnings: none

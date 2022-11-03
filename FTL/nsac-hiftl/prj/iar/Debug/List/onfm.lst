@@ -1,0 +1,560 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        26/Oct/2022  20:51:02
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\core\onfm.c
+#    Command line =  
+#        "C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\core\onfm.c" -D
+#        BOOT_LEVEL_2 -lcN "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\List" -o
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\Obj" --no_cse --no_unroll --no_inline
+#        --no_code_motion --no_tbaa --no_clustering --no_scheduling --debug
+#        --endian=little --cpu=ARM926EJ-S -e --fpu=None --dlib_config
+#        "C:\Program Files (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        "C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\prj\iar\..\..\"
+#        -I "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\" -I
+#        "C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\" --cpu_mode thumb -Ol
+#        --use_c++_inline
+#    List file    =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\List\onfm.lst
+#    Object file  =  
+#        C:\Users\niusenc\Desktop\recovery -
+#        Copy\nsac-hiftl\prj\iar\Debug\Obj\onfm.o
+#
+###############################################################################
+
+C:\Users\niusenc\Desktop\recovery - Copy\nsac-hiftl\core\onfm.c
+      1          /*********************************************************
+      2           * Module name: onfm.c
+      3           *
+      4           * Copyright 2010, 2011. All Rights Reserved, Crane Chu.
+      5           *
+      6           * This file is part of OpenNFM.
+      7           *
+      8           * OpenNFM is free software: you can redistribute it and/or 
+      9           * modify it under the terms of the GNU General Public 
+     10           * License as published by the Free Software Foundation, 
+     11           * either version 3 of the License, or (at your option) any 
+     12           * later version.
+     13           * 
+     14           * OpenNFM is distributed in the hope that it will be useful,
+     15           * but WITHOUT ANY WARRANTY; without even the implied 
+     16           * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR 
+     17           * PURPOSE. See the GNU General Public License for more 
+     18           * details.
+     19           *
+     20           * You should have received a copy of the GNU General Public 
+     21           * License along with OpenNFM. If not, see 
+     22           * <http://www.gnu.org/licenses/>.
+     23           *
+     24           * First written on 2010-01-01 by cranechu@gmail.com
+     25           *
+     26           * Module Description:
+     27           *    Buffer writing sectors in RAM (e.g. FIFO), until
+     28           *    enough sectors to write as an MPP (multiple plane
+     29           *    page), which can program parallelly. Also force to
+     30           *    flush when stop or non-seqential writing happened.
+     31           *
+     32           *********************************************************/
+     33          
+     34          #include <core\inc\cmn.h>
+     35          #include <core\inc\buf.h>
+     36          #include <core\inc\ftl.h>
+     37          #include <core\inc\ubi.h>
+     38          #include <core\inc\mtd.h>
+     39          #include <sys\sys.h>
+     40          #include "sys\lpc313x\lib\lpc313x_chip.h"
+     41          #define RAM_DISK_SECTOR_COUNT    (EXT_SDRAM_LENGTH/SECTOR_SIZE)
+     42          
+     43          #if (SIM_TEST == FALSE)
+     44          #include <drv_uart.h>
+     45          #else
+     46          #include <core\ftl\ftl_inc.h>
+     47          #endif
+     48          
+     49          #include <stdio.h>
+     50          
+     51          /* implement ONFM based on RAM, for bus debugging/testing */
+     52          #define ONFM_RAMDISK         (FALSE)
+     53          
+     54          #if (ONFM_RAMDISK == FALSE || SIM_TEST == TRUE)
+     55          
+     56          static
+     57          int onfm_read_sector(unsigned long sector_addr, void* sector_data);
+     58          
+     59          static
+     60          int onfm_write_sector(unsigned long sector_addr, void* sector_data);
+     61          
+     62          #if defined(__ICCARM__)
+     63          #pragma data_alignment=DMA_BURST_BYTES
+     64          #endif
+     65          static UINT8 onfm_read_buffer[MPP_SIZE];
+     66          
+     67          static LSADDR read_buffer_start_sector;
+     68          
+     69          SECTOR* ram_disk = (SECTOR*) (EXT_SDRAM_BASE);
+     70          
+     71          /* called after failure init */
+     72          int ONFM_Format() {
+     73            STATUS ret;
+     74                
+     75            MTD_Init();  
+     76            
+     77            ret = FTL_Format();
+     78            if (ret == STATUS_SUCCESS) {
+     79              return 0;
+     80            } else {
+     81              return -1;
+     82            }
+     83          }
+     84          
+     85          int ONFM_Capacity() {
+     86          
+     87            PGADDR page_count = FTL_Capacity() - 1;//240344
+     88            
+     89            uart_printf("%s: page_count=%d\r\n",__func__,page_count);
+     90            
+     91            int ret;
+     92            //在FS层中以扇区sector为单位进行读写，每个扇区512字节
+     93            //每个flash页2KB，所以提交给上层的扇区数=逻辑地址I总页数*4
+     94            ret = page_count << SECTOR_PER_MPP_SHIFT;//<<2=*4=961376
+     95          
+     96            //jsjpenn
+     97            uart_printf("%s: Sector number submitted=%d\r\n",__func__,ret);
+     98            
+     99            return ret;
+    100          }
+    101          
+    102          int ONFM_Mount() {
+    103            STATUS ret;
+    104            read_buffer_start_sector = INVALID_LSADDR;
+    105          
+    106            BUF_Init();
+    107            MTD_Init();
+    108           
+    109           
+    110            ret = FTL_Init();
+    111            if (ret == STATUS_SUCCESS) {
+    112              return 0;
+    113            } else {
+    114              return -1;
+    115            }
+    116          }
+    117          
+    118          int ONFM_Read(unsigned long sector_addr, unsigned long sector_count,
+    119                        void* sector_data) {
+    120          
+    121            unsigned long i;
+    122            STATUS status;
+    123            int ret = 0;
+    124            
+    125          
+    126            /* TODO: pre-read following page, pass back the pointer */
+    127            if (sector_addr % SECTOR_PER_MPP == 0 && sector_count == SECTOR_PER_MPP) {
+    128              /* read the full/aligned MPP directly, bypass the buffer read */
+    129              status = FTL_Read(sector_addr >> SECTOR_PER_MPP_SHIFT, sector_data);
+    130              if (status == STATUS_SUCCESS) {
+    131                ret = 0;
+    132              } else {
+    133                ret = -1;
+    134              }
+    135            } else {
+    136              for (i = 0; i < sector_count; i++) {
+    137                if (ret == 0) {
+    138                  ret = onfm_read_sector(sector_addr + i,
+    139                                         ((UINT8*) sector_data) + SECTOR_SIZE * i);
+    140                }
+    141              }
+    142            }
+    143            ASSERT(ret == 0);
+    144          
+    145            return ret;
+    146          }
+    147          
+    148          int ONFM_Write(unsigned long sector_addr, unsigned long sector_count,
+    149                         void* sector_data) {
+    150            unsigned long i;
+    151            STATUS status;
+    152            int ret = 0;
+    153          
+    154          
+    155            
+    156            /* disable read buffer if something is written */
+    157            read_buffer_start_sector = INVALID_LSADDR;
+    158          
+    159            if (sector_addr % SECTOR_PER_MPP == 0 && sector_count == SECTOR_PER_MPP) {
+    160              // EXPERIMENT START
+    161              unsigned long sec_addr = sector_addr % RAM_DISK_SECTOR_COUNT;
+    162              if (sec_addr + sector_count >= RAM_DISK_SECTOR_COUNT) {
+    163                sec_addr = 0;
+    164              }
+    165              /*sec_DRAM_addr = (void*) &(ram_disk[sec_addr][0]);
+    166               memcpy(sec_DRAM_addr, sector_data, sector_count * SECTOR_SIZE);
+    167               sprintf(uart_buf,"\n\rExperiment: Written sector %d at %p to %d at %p\n\r", sector_addr, sector_data, sec_addr, sec_DRAM_addr);
+    168               UartWrite((unsigned char *)uart_buf,strlen(uart_buf));*/
+    169              // EXPERIMENT STOP
+    170              /* write the full/aligned MPP directly, bypass the buffer merge */
+    171              status = FTL_Write(sector_addr >> SECTOR_PER_MPP_SHIFT, sector_data);
+    172              
+    173              //jsjpenn    
+    174              if (status == STATUS_Remount) {
+    175               //uart_printf("%s: Start to remount\r\n",__func__);
+    176               ret=2;
+    177               return ret;
+    178              }//jsjpennend
+    179              
+    180              
+    181                      
+    182              if (status == STATUS_SUCCESS) {
+    183                ret = 0;
+    184              } else {
+    185                ret = -1;
+    186              }
+    187            } else {
+    188              for (i = 0; i < sector_count; i++) {
+    189                if (ret == 0) {
+    190                  ret = onfm_write_sector(sector_addr + i,
+    191                                          ((UINT8*) sector_data) + SECTOR_SIZE * i);
+    192                } else {
+    193                  break;
+    194                }
+    195              }
+    196          
+    197              if (ret == 0) {
+    198                /* flush the data in ram buffer */
+    199                ret = onfm_write_sector((unsigned long) (-1), NULL);
+    200              }
+    201            }
+    202          
+    203            return ret;
+    204          }
+    205          
+    206          
+    207          
+    208          //jsjpenn
+    209          extern int g_ReceiveCommandNum;
+    210          extern UINT32 g_IdleCcount;
+    211          
+    212          int Start_change_state(){
+    213            int ret; 
+    214            
+    215            g_ReceiveCommandNum++;    
+    216            g_IdleCcount=0;
+    217              
+    218            if(g_ReceiveCommandNum==1 && g_state==1){      
+    219              ret=FTL_UBI_StartLockImage();//过程1
+    220              if(ret == STATUS_SUCCESS) {        
+    221               g_state++;        
+    222               uart_printf("%s: State 1 and process 1 done, we have entered state 2, start to test malware\r\n",__func__);       
+    223               ret=STATUS_SUCCESS;//不需要重启
+    224               return ret;
+    225              }
+    226            }
+    227          
+    228            //wpy
+    229            if(g_ReceiveCommandNum%2==0){
+    230              ret=FTL_UBI_RestoreImage();//过程2
+    231              if(ret == STATUS_SUCCESS) {
+    232               uart_printf("%s: Restore the image ok, the %d time to enter state 2,\r\n",__func__,g_ReceiveCommandNum);
+    233               ret=STATUS_Remount; //重启
+    234               return ret;
+    235              }
+    236            }  
+    237            if(g_ReceiveCommandNum%2==1){      
+    238              ret=FTL_UBI_StartLockImage();//过程1
+    239              if(ret == STATUS_SUCCESS) {              
+    240               uart_printf("%s: update the lock image ,g_state=%d,\r\n",__func__,g_state);       
+    241               ret=STATUS_SUCCESS;//不需要重启
+    242               return ret;
+    243              }
+    244            }
+    245           return ret; 
+    246          }
+    247          
+    248          
+    249          int ONFM_Unmount() {
+    250            int onfm_ret;
+    251            STATUS ret= STATUS_SUCCESS;
+    252          
+    253             
+    254            uart_printf("%s: USB is unmounting ...\n\r", __func__);
+    255            
+    256            if (ret == STATUS_SUCCESS) {
+    257              onfm_ret = 0;
+    258            } else {
+    259              onfm_ret = -1;
+    260            }
+    261          
+    262            return onfm_ret;
+    263          }
+    264          
+    265          static
+    266          int onfm_read_sector(unsigned long sector_addr, void* sector_data) {
+    267            PGADDR page_addr;
+    268            STATUS ret = STATUS_SUCCESS;
+    269            if (sector_addr
+    270                >= read_buffer_start_sector&& sector_addr < read_buffer_start_sector + SECTOR_PER_MPP) {
+    271              ; /* no need to read from FTL, just get data from the read cache */
+    272            } else {
+    273              page_addr = sector_addr >> SECTOR_PER_MPP_SHIFT;
+    274              ret = FTL_Read(page_addr, onfm_read_buffer);
+    275              if (ret == STATUS_SUCCESS) {
+    276                read_buffer_start_sector = page_addr << SECTOR_PER_MPP_SHIFT;
+    277              }
+    278            }
+    279          
+    280            if (ret == STATUS_SUCCESS && sector_data != NULL) {
+    281              memcpy(
+    282                  sector_data,
+    283                  &(onfm_read_buffer[(sector_addr - read_buffer_start_sector)
+    284                      * SECTOR_SIZE]),
+    285                  SECTOR_SIZE);
+    286          
+    287              return 0;
+    288            } else {
+    289              read_buffer_start_sector = INVALID_LSADDR;
+    290          
+    291              return -1;
+    292            }
+    293          }
+    294          
+    295          static
+    296          int onfm_write_sector(unsigned long sector_addr, void* sector_data) {
+    297            static LSADDR starting_sector = INVALID_LSADDR;
+    298            PGADDR page_addr = sector_addr >> SECTOR_PER_MPP_SHIFT;
+    299            STATUS ret = STATUS_SUCCESS;
+    300            void* buffer = NULL;
+    301            if (starting_sector == INVALID_LSADDR) {
+    302              if (sector_data != NULL) {
+    303                starting_sector = page_addr << SECTOR_PER_MPP_SHIFT;
+    304          
+    305                /* write to buffer */
+    306                BUF_PutSector(sector_addr, sector_data);
+    307              } else {
+    308                /* no data to flush. */
+    309                ret = STATUS_SUCCESS;
+    310              }
+    311            } else if (sector_addr >= starting_sector&&
+    312            sector_addr < starting_sector+SECTOR_PER_MPP &&
+    313            sector_data != NULL) {
+    314              /* write to buffer */
+    315              BUF_PutSector(sector_addr, sector_data);
+    316            } else {
+    317              ASSERT(
+    318                  sector_data == NULL || sector_addr == starting_sector + SECTOR_PER_MPP);
+    319          
+    320              /* flush the sectors in page buffer */
+    321              BUF_GetPage(&page_addr, &buffer);
+    322          
+    323              /* write to FTL */
+    324              ret = FTL_Write(page_addr, buffer);
+    325              if (ret == STATUS_SUCCESS) {
+    326                if (sector_data != NULL) {
+    327                  /* fill buffers with next sector */
+    328                  page_addr = sector_addr >> SECTOR_PER_MPP_SHIFT;
+    329                  starting_sector = page_addr << SECTOR_PER_MPP_SHIFT;
+    330          
+    331                  /* write to buffer */
+    332                  BUF_PutSector(sector_addr, sector_data);
+    333                } else {
+    334                  ASSERT(sector_addr == (unsigned long ) (-1));
+    335                  starting_sector = INVALID_LSADDR;
+    336                }
+    337              }
+    338            }
+    339          
+    340            if (ret == STATUS_SUCCESS) {
+    341              return 0;
+    342            } else {
+    343              return -1;
+    344            }
+    345          }
+    346          
+    347          #else
+    348          
+    349          #include "sys\lpc313x\lib\lpc313x_chip.h"
+    350          
+    351          #define RAM_DISK_SECTOR_COUNT    (EXT_SDRAM_LENGTH/SECTOR_SIZE)
+    352          
+    353          SECTOR* ram_disk = (SECTOR*)(EXT_SDRAM_BASE);
+    354          
+    355          int ONFM_Format()
+    356          {
+    357            memset(ram_disk, 0, RAM_DISK_SECTOR_COUNT*SECTOR_SIZE);
+    358          
+    359            return 0;
+    360          }
+    361          
+    362          int ONFM_Capacity()
+    363          {
+    364            return RAM_DISK_SECTOR_COUNT;
+    365          }
+    366          
+    367          int ONFM_Mount()
+    368          {
+    369           
+    370            memset(ram_disk, 0, RAM_DISK_SECTOR_COUNT*SECTOR_SIZE);
+    371          
+    372            return 0;
+    373          }
+    374          
+    375          int ONFM_Read(unsigned long sector_addr,
+    376              unsigned long sector_count,
+    377              void* sector_data)
+    378          {
+    379            ASSERT(sector_addr+sector_count <= RAM_DISK_SECTOR_COUNT);
+    380          
+    381            memcpy(sector_data,
+    382                &(ram_disk[sector_addr][0]),
+    383                sector_count*SECTOR_SIZE);
+    384          
+    385            return 0;
+    386          }
+    387          
+    388          int ONFM_Write(unsigned long sector_addr,
+    389              unsigned long sector_count,
+    390              void* sector_data)
+    391          {
+    392            ASSERT(sector_addr+sector_count <= RAM_DISK_SECTOR_COUNT);
+    393          
+    394            /* loop to cause a slow write */
+    395            memcpy(&(ram_disk[sector_addr][0]),
+    396                sector_data,
+    397                sector_count*SECTOR_SIZE);
+    398          
+    399            BUF_Free(sector_data);
+    400          
+    401            return 0;
+    402          }
+    403          
+    404          int ONFM_Unmount()
+    405          {
+    406            return 0;
+    407          }
+    408          
+    409          #endif
+
+   Maximum stack usage in bytes:
+
+   .cstack Function
+   ------- --------
+       8   ONFM_Capacity
+         8   -> FTL_Capacity
+         8   -> uart_printf
+       8   ONFM_Format
+         8   -> FTL_Format
+         8   -> MTD_Init
+       8   ONFM_Mount
+         8   -> BUF_Init
+         8   -> FTL_Init
+         8   -> MTD_Init
+      24   ONFM_Read
+        24   -> FTL_Read
+        24   -> onfm_read_sector
+        24 __aeabi_uidivmod
+       8   ONFM_Unmount
+         8   -> uart_printf
+      24   ONFM_Write
+        24   -> FTL_Write
+        24   -> onfm_write_sector
+        24 __aeabi_uidivmod
+       8   Start_change_state
+         8   -> FTL_UBI_RestoreImage
+         8   -> FTL_UBI_StartLockImage
+         8   -> uart_printf
+         8 __aeabi_idivmod
+      16   onfm_read_sector
+        16   -> FTL_Read
+        16   -> __aeabi_memcpy
+      24   onfm_write_sector
+        24   -> BUF_GetPage
+        24   -> BUF_PutSector
+        24   -> FTL_Write
+      40   printint
+        40   -> UartWrite
+        40 __aeabi_uidiv
+        40 __aeabi_uidivmod
+      56   printuint
+        56   -> UartWrite
+        56 __aeabi_uidiv
+        56 __aeabi_uidivmod
+      40   uart_printf
+        40   -> UartWrite
+        40   -> printint
+        40   -> printuint
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+       4  ??DataTable5
+       4  ??DataTable5_1
+       4  ??DataTable8
+       4  ??DataTable8_1
+       4  ??DataTable8_2
+       4  ??DataTable8_3
+       4  ??DataTable8_4
+       4  ??DataTable9
+       4  ??DataTable9_1
+       4  ??DataTable9_10
+       4  ??DataTable9_2
+       4  ??DataTable9_3
+       4  ??DataTable9_4
+       4  ??DataTable9_5
+       4  ??DataTable9_6
+       4  ??DataTable9_7
+       4  ??DataTable9_8
+       4  ??DataTable9_9
+       8  ?_0
+      20  ?_1
+      36  ?_2
+      84  ?_3
+      60  ?_4
+      44  ?_5
+      28  ?_6
+      36  ONFM_Capacity
+      28  ONFM_Format
+      40  ONFM_Mount
+      92  ONFM_Read
+      30  ONFM_Unmount
+     146  ONFM_Write
+     156  Start_change_state
+      20  digits
+      20  digits
+    2048  onfm_read_buffer
+     106  onfm_read_sector
+     200  onfm_write_sector
+     104  printint
+      64  printuint
+       4  ram_disk
+       4  read_buffer_start_sector
+       4  starting_sector
+     210  uart_printf
+      52  -- Other
+
+ 
+ 2 052 bytes in section .bss
+    48 bytes in section .data
+   332 bytes in section .rodata
+ 1 284 bytes in section .text
+ 
+ 1 284 bytes of CODE  memory
+   332 bytes of CONST memory
+ 2 100 bytes of DATA  memory
+
+Errors: none
+Warnings: none
