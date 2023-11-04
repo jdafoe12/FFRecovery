@@ -1,0 +1,493 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        02/Aug/2023  19:53:32
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\sys\lpc313x\csp\drv_cgu.c
+#    Command line =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\sys\lpc313x\csp\drv_cgu.c
+#        -D BOOT_LEVEL_2 -lcN
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List
+#        -o C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj
+#        --no_cse --no_unroll --no_inline --no_code_motion --no_tbaa
+#        --no_clustering --no_scheduling --debug --endian=little
+#        --cpu=ARM926EJ-S -e --fpu=None --dlib_config "C:\Program Files
+#        (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\ -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\
+#        --cpu_mode thumb -Ol --use_c++_inline
+#    List file    =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List\drv_cgu.lst
+#    Object file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj\drv_cgu.o
+#
+###############################################################################
+
+C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\sys\lpc313x\csp\drv_cgu.c
+      1          /*************************************************************************
+      2           *
+      3           *   Used with ICCARM and AARM.
+      4           *
+      5           *    (c) Copyright IAR Systems 2008
+      6           *
+      7           *    File name   : drv_cgu.c
+      8           *    Description : Lpc3130 Clock Generation Unit Driver
+      9           *
+     10           *    History :
+     11           *    1. Date        : 30.3.2009
+     12           *       Author      : Stoyan Choynev
+     13           *       Description : Initila Revision
+     14           *
+     15           *    $Revision: 34106 $
+     16           *************************************************************************/
+     17          
+     18          /** include files **/
+     19          #include <NXP\iolpc3130.h>
+     20          #include "arm_comm.h"
+     21          #include "drv_cgu.h"
+     22          
+     23          /** local definitions **/
+     24          #define FDIV_MADD_MSUB(n,m)   ((((m-n)&0xFF)<<3) | (((-n)&0xFF)<<11))
+     25          #define FDIV17_MADD_MSUB(n,m) ((((m-n)&0x1FFF)<<3) | (((-n)&0x1FFF)<<16))
+     26          #define FDCTRL_STRETCH (1<<2)
+     27          #define FDCTRL_ENABLE  (1<<0)
+     28          
+     29          #define ESR_ENABLE (1<<0)
+     30          #define ESR_FDIV(n) ((n<<1)|ESR_ENABLE)
+     31          #define BASE_CLOCK 0
+     32          
+     33          
+     34          /** default settings **/
+     35          #define CLK_EN_0_31   ((1<<APB0_CLK)|(1<<APB1_CLK)|(1<<APB2_CLK)|(1<<APB3_CLK)|(1<<APB4_CLK)|\
+     36                                 (1<<AHB_TO_INTC_CLK)|(1<<AHB0_CLK)|(1<<CLOCK_OUT)|\
+     37                                 (1<<ARM926_CORE_CLK)|(1<<ARM926_BUSIF_CLK)|(1<<ARM926_RETIME_CLK)|(1<<ISRAM0_CLK)|\
+     38                                 (1<<ISRAM1_CLK)|(1<<ISROM_CLK)|(1<<INTC_CLK)|(1<<AHB_TO_APB0_PCLK))
+     39          #define CLK_EN_32_63  ((1<<(IOCONF_PCLK-32))|(1<<(CGU_PCLK-32))|(1<<(SYSCREG_PCLK-32))|(1<<(AHB_TO_APB1_PCLK-32))|(1<<(AHB_TO_APB2_PCLK-32))|\
+     40                                 (1<<(PCM_PCLK-32))|(1<<(AHB_TO_APB3_PCLK-32)))
+     41          #define CLK_EN_64_92  (0)
+     42          
+     43          /** external functions **/
+     44          
+     45          /** external data **/
+     46          
+     47          /** internal functions **/
+     48          void CGU_SelectDomainClk(DOMAIN Domain, IN_CLOCKS Clock);
+     49          void CGU_CnfgBCR(DOMAIN Domain,Int32U Cnfg);
+     50          
+     51          /** public data **/
+     52          
+     53          /** private data **/
+     54          static const Int32U FDIV_Config[FDIV23+1]  =
+     55          {
+     56             /*SYS*/
+     57             FDIV_MADD_MSUB(1,2)|FDCTRL_STRETCH|FDCTRL_ENABLE,  /*FDIV0 1/2*/
+     58             FDIV_MADD_MSUB(1,2)|FDCTRL_STRETCH,                /*FDIV1 1/2*/
+     59             FDIV_MADD_MSUB(1,4)|FDCTRL_STRETCH|FDCTRL_ENABLE,  /*FDIV2 1/4*/
+     60             FDIV_MADD_MSUB(1,4)|FDCTRL_STRETCH,                /*FDIV3 1/4*/
+     61             FDIV_MADD_MSUB(1,3)|FDCTRL_STRETCH|FDCTRL_ENABLE,  /*FDIV4 1/3*/
+     62             FDIV_MADD_MSUB(1,8)|FDCTRL_STRETCH|FDCTRL_ENABLE,  /*FDIV5 1/8*/
+     63             FDIV_MADD_MSUB(1,8)|FDCTRL_STRETCH,                /*FDIV6 1/8*/
+     64             /*AHB_APB0_BASE*/
+     65             FDIV_MADD_MSUB(1,4)|FDCTRL_STRETCH|FDCTRL_ENABLE,  /*FDIV7 1/2*/
+     66             FDIV_MADD_MSUB(1,180)|FDCTRL_STRETCH|FDCTRL_ENABLE,/*FDIV8 1/180*/
+     67             /*AHB_APB1_BASE*/
+     68             FDIV_MADD_MSUB(1,2)|FDCTRL_STRETCH|FDCTRL_ENABLE,  /*FDIV9 1/2*/
+     69             FDIV_MADD_MSUB(1,12)|FDCTRL_STRETCH|FDCTRL_ENABLE, /*FDIV10 1/12*/
+     70             /*AHB_APB2_BASE*/
+     71             FDIV_MADD_MSUB(1,2)|FDCTRL_STRETCH|FDCTRL_ENABLE,  /*FDIV11 1/2*/
+     72             FDIV_MADD_MSUB(1,40)|FDCTRL_STRETCH,               /*FDIV12 1/40*/
+     73             FDIV_MADD_MSUB(1,16)|FDCTRL_STRETCH,               /*FDIV13 1/16*/
+     74             /*AHB_APB3_BASE*/
+     75             FDIV_MADD_MSUB(1,2)|FDCTRL_STRETCH,                /*FDIV14 1/2*/
+     76             /*PCM_BASE */
+     77             FDIV_MADD_MSUB(1,8)|FDCTRL_STRETCH|FDCTRL_ENABLE,  /*FDIV15 1/8*/
+     78             /*UART_BASE*/
+     79             FDIV_MADD_MSUB(1,2)|FDCTRL_STRETCH,                /*FDIV16 1/2*/
+     80             /*CLK1024FS_BASE*/
+     81             FDIV17_MADD_MSUB(1,256)|FDCTRL_STRETCH|FDCTRL_ENABLE, /*FDIV17 1/256*/
+     82             FDIV_MADD_MSUB(1,4)|FDCTRL_STRETCH|FDCTRL_ENABLE,     /*FDIV18 1/4  */
+     83             FDIV_MADD_MSUB(1,2)|FDCTRL_STRETCH,                   /*FDIV19 1/2*/
+     84             FDIV_MADD_MSUB(1,4)|FDCTRL_STRETCH|FDCTRL_ENABLE,     /*FDIV20 1/4*/
+     85             FDIV_MADD_MSUB(1,32)|FDCTRL_STRETCH,                  /*FDIV21 1/32*/
+     86             FDIV_MADD_MSUB(1,2)|FDCTRL_STRETCH,                   /*FDIV22 1/2*/
+     87             /*SPI_CLK_BASE*/
+     88             FDIV_MADD_MSUB(1,2)|FDCTRL_STRETCH|FDCTRL_ENABLE,     /*FDIV23 1/2*/
+     89          };
+     90          
+     91          
+     92          static const Int32U ESR_Cnfg[SYSCLK_O+1-3] =
+     93          {
+     94             /*SYS_BASE CLOCKS*/
+     95             ESR_FDIV(FDIV0),ESR_FDIV(FDIV0), /*APB0_CLK, APB1_CLK*/
+     96             ESR_FDIV(FDIV0),ESR_FDIV(FDIV0), /*APB2_CLK, APB3_CLK*/
+     97             ESR_FDIV(FDIV0),ESR_FDIV(FDIV0), /*APB4_CLK, AHB_TO_INTC_CLK*/
+     98             ESR_FDIV(FDIV0),ESR_FDIV(FDIV0), /*AHB0_CLK, EBI_CLK*/
+     99             ESR_FDIV(FDIV2),ESR_FDIV(FDIV0), /*DMA_PCLK, DMA_CLK_GATED*/
+    100             ESR_FDIV(FDIV0),ESR_FDIV(FDIV2), /*NANDFLASH_S0_CLK, NANDFLASH_ECC_CLK*/
+    101             0,              ESR_FDIV(FDIV0), /*RESERVED, NANDFLASH_NAND_CLK*/
+    102             ESR_FDIV(FDIV0),ESR_FDIV(FDIV0), /*NANDFLASH_PCLK, CLOCK_OUT*/
+    103             BASE_CLOCK,     ESR_FDIV(FDIV0), /*ARM926_CORE_CLK,ARM926_BUSIF_CLKT*/
+    104             BASE_CLOCK,     ESR_FDIV(FDIV0), /*ARM926_RETIME_CLK,SD_MMC_HCLK*/
+    105             ESR_FDIV(FDIV0),ESR_FDIV(FDIV0), /*SD_MMC_CCLK_IN,USB_OTG_AHB_CLK*/
+    106             ESR_FDIV(FDIV4),ESR_FDIV(FDIV2), /*ISRAM0_CLK,RED_CTL_RSCLK*/
+    107             ESR_FDIV(FDIV4),ESR_FDIV(FDIV4), /*ISRAM1_CLK,ISROM_CLK*/
+    108             ESR_FDIV(FDIV0),ESR_FDIV(FDIV0), /*MPMC_CFG_CLK,MPMC_CFG_CLK2*/
+    109             BASE_CLOCK,     ESR_FDIV(FDIV0), /*MPMC_CFG_CLK3,INTC_CLK*/
+    110             /*AHB_APB0_BASE CLOCKS*/
+    111             ESR_FDIV(FDIV7-FDIV7),ESR_FDIV(FDIV7-FDIV7),/*AHB_TO_APB0_PCLK, EVENT_ROUTER_PCLK*/
+    112             ESR_FDIV(FDIV7-FDIV7),ESR_FDIV(FDIV8-FDIV7),/*ADC_PCLK, ADC_CLK*/
+    113             ESR_FDIV(FDIV7-FDIV7),ESR_FDIV(FDIV7-FDIV7),/*WDOG_PCLK,IOCONF_PCLK*/
+    114             ESR_FDIV(FDIV7-FDIV7),ESR_FDIV(FDIV7-FDIV7),/*CGU_PCLK, SYSCREG_PCLK*/
+    115             0,                    ESR_FDIV(FDIV7-FDIV7),/*RESERVED, RNG_PCLK*/
+    116             /*AHB_APB1_BASE CLOCKS*/
+    117             ESR_FDIV(FDIV9-FDIV9),ESR_FDIV(FDIV9-FDIV9), /*AHB_TO_APB1_PCLK, TIMER0_PCLK*/
+    118             ESR_FDIV(FDIV9-FDIV9),ESR_FDIV(FDIV9-FDIV9), /*TIMER1_PCLK, TIMER2_PCLK*/
+    119             ESR_FDIV(FDIV9-FDIV9),ESR_FDIV(FDIV9-FDIV9), /*TIMER3_PCLK, PWM_PCLK*/
+    120             ESR_FDIV(FDIV9-FDIV9),ESR_FDIV(FDIV9-FDIV9), /*PWM_PCLK_REGS, PWM_CLK*/
+    121             ESR_FDIV(FDIV9-FDIV9),ESR_FDIV(FDIV9-FDIV9), /*I2C0_PCLK, I2C1_PCLK*/
+    122             /*AHB_APB2_BASE CLOCKS*/
+    123             ESR_FDIV(FDIV11-FDIV11),ESR_FDIV(FDIV11-FDIV11),  /*AHB_TO_APB2_PCLK, PCM_PCLK*/
+    124             ESR_FDIV(FDIV11-FDIV11),ESR_FDIV(FDIV11-FDIV11),  /*PCM_APB_PCLK, UART_APB_CLK*/
+    125             ESR_FDIV(FDIV11-FDIV11),ESR_FDIV(FDIV12-FDIV11),  /*LCD_PCLK, LCD_CLK*/
+    126             ESR_FDIV(FDIV11-FDIV11),ESR_FDIV(FDIV11-FDIV11),  /*SPI_PCLK, SPI_PCLK_GATED*/
+    127             /*AHB_APB3_BASE CLOCKS*/
+    128             BASE_CLOCK,           BASE_CLOCK,             /*AHB_TO_APB3_PCLK,I2S_CFG_PCLK*/
+    129             BASE_CLOCK,           BASE_CLOCK,             /*EDGE_DET_PCLK, I2STX_FIFO_0_PCLK*/
+    130             BASE_CLOCK,           BASE_CLOCK,             /*I2STX_IF_0_PCLK, I2STX_FIFO_1_PCLK*/
+    131             BASE_CLOCK,           BASE_CLOCK,             /*I2STX_IF_1_PCLK, I2SRX_FIFO_0_PCLK*/
+    132             BASE_CLOCK,           BASE_CLOCK,             /*I2SRX_IF_0_PCLK, I2SRX_FIFO_1_PCLK*/
+    133             BASE_CLOCK,           0,                      /*2SRX_IF_1_PCLK, RESERVED*/
+    134             0,                                            /*RESERVED*/
+    135             /*PCM_BASE CLOCKS*/
+    136             ESR_FDIV(FDIV15-FDIV15),  /*PCM_CLK_IP*/
+    137             /*UART_BASE CLOCKS*/
+    138             BASE_CLOCK,               /*UART_U_CLK*/
+    139             /*CLK1024FS_BASE CLOCKS*/
+    140             ESR_FDIV(FDIV17-FDIV17),ESR_FDIV(FDIV18-FDIV17),/*I2S_EDGE_DETECT_CLK, I2STX_BCK0_N*/
+    141             ESR_FDIV(FDIV17-FDIV17),BASE_CLOCK,             /*I2STX_WS0, I2STX_CLK0*/
+    142             ESR_FDIV(FDIV18-FDIV17),ESR_FDIV(FDIV17-FDIV17),/*I2STX_BCK1_N, I2STX_WS1*/
+    143             BASE_CLOCK,             ESR_FDIV(FDIV20-FDIV17),/*CLK_256FS, I2SRX_BCK0_N*/
+    144             ESR_FDIV(FDIV17-FDIV17),ESR_FDIV(FDIV20-FDIV17),/*I2SRX_WS0, I2SRX_BCK1_N*/
+    145             ESR_FDIV(FDIV17-FDIV17),0,                      /*I2SRX_WS1, RESERVED*/
+    146             0,                      0,                      /*RESERVED, RESERVED*/
+    147             /*SPI_CLK_BASE CLOCKS*/
+    148             ESR_FDIV(FDIV23-FDIV23),ESR_FDIV(FDIV23-FDIV23)/*SPI_CLK, SPI_CLK_GATED*/
+    149          };
+    150          
+    151          /** public functions **/
+    152          
+    153          void CGU_Run_Clock(CGU_CLOCKS Clock)
+    154          {
+    155             volatile __pcr_bits * pcr = (__pcr_bits *)(&PCR0+Clock);
+    156             pcr->RUN = 1;
+    157          }
+    158          
+    159          void CGU_Stop_Clock(CGU_CLOCKS Clock)
+    160          {
+    161             volatile __pcr_bits * pcr = (__pcr_bits *)(&PCR0+Clock);
+    162             pcr->RUN = 0;
+    163          }
+    164          
+    165          /*************************************************************************
+    166           * Function Name: InitClock
+    167           * Parameters: None
+    168           *
+    169           * Return: None
+    170           *
+    171           * Description:
+    172           *
+    173           *************************************************************************/
+    174          void InitClock(void)
+    175          {
+    176             DOMAIN DomainID;
+    177             CGU_CLOCKS ClockID;
+    178          
+    179             /* TODO: review CGU config, improve speed of USB/DMA/NAND */
+    180          
+    181             for(DomainID = DMN_SYS; DMN_SYSCLK_O >= DomainID; DomainID++)
+    182             {
+    183                /*Switch all clock domains to 12MHz*/
+    184                CGU_SelectDomainClk(DomainID,CLK_FFAST);
+    185                /*Disable Fdiv in BCR*/
+    186                CGU_CnfgBCR(DomainID, 0x0);
+    187             }
+    188          
+    189             for(ClockID = APB0_CLK ; SYSCLK_O >= ClockID; ClockID++)
+    190             {
+    191                /*this clocks don't exist*/
+    192                if((12 == ClockID) || (38 == ClockID) || (69 == ClockID) || (70 == ClockID) ||\
+    193                      (84 == ClockID) || (85 == ClockID) || (86 == ClockID)) continue;
+    194          
+    195                /*Clear ESR registers*/
+    196                if((I2SRX_BCK0 != ClockID) && (I2SRX_BCK1 != ClockID) && (SYSCLK_O != ClockID))
+    197                {
+    198                   if(I2SRX_BCK0 >ClockID) *((Int32U *)&ESR0 +ClockID) = 0;
+    199                   else *((Int32U *)&ESR0 +ClockID-2) = 0;
+    200                }
+    201                /*Enable extern*/
+    202                switch(ClockID)
+    203                {
+    204                   case DMA_CLK_GATED:
+    205                   case EVENT_ROUTER_PCLK:
+    206                   case ADC_PCLK:
+    207                   case IOCONF_PCLK:
+    208                   case CGU_PCLK:
+    209                   case SYSCREG_PCLK:
+    210                   case PWM_PCLK_REGS:
+    211                   case PCM_APB_PCLK:
+    212                   case SPI_PCLK_GATED:
+    213                   case PCM_CLK_IP:
+    214                   case SPI_CLK_GATED:
+    215                      *((Int32U *)&PCR0 + ClockID) |= (0x1<<3);
+    216                      break;
+    217                   case WDOG_PCLK:
+    218                   case I2C0_PCLK:
+    219                   case I2C1_PCLK:
+    220                   case UART_APB_CLK:
+    221                   case LCD_PCLK:
+    222                      *((Int32U *)&PCR0 + ClockID) &= ~(0x1<<3);
+    223                      break;
+    224                   default:
+    225                      break;
+    226                }
+    227          
+    228                /*Enable Out*/
+    229                if((ARM926_BUSIF_CLK == ClockID) || (MPMC_CFG_CLK == ClockID))
+    230                {
+    231                   *((Int32U *)&PCR0 + ClockID) |= (0x1<<4);
+    232                }
+    233                else
+    234                {
+    235                   *((Int32U *)&PCR0 + ClockID) &= ~(0x1<<4);
+    236                }
+    237          
+    238                /*Check default enabled clocks*/
+    239                if(((32> ClockID) && (CLK_EN_0_31 & (1<<ClockID))) || \
+    240                      ((64> ClockID) && (CLK_EN_32_63 & (1<<(ClockID-32)))) ||\
+    241                      ((CLK_EN_64_92 & (1<<(ClockID-64)))))
+    242                {
+    243                   /*Enable Clock*/
+    244                   CGU_Run_Clock(ClockID);
+    245                }
+    246                else
+    247                {
+    248                   /*Disable Clock*/
+    249                   CGU_Stop_Clock(ClockID);
+    250                }
+    251             }
+    252          
+    253          #if 1
+    254             /*PLL Init 180MHz*/
+    255             /* when use K9HAG, set PLL to 180MHz, and generate 30MHz nand rw timing */
+    256             HP1_MODE = 0x4;     /*Power Down PLL*/
+    257          
+    258             HP1_FIN_SELECT = 0; /*Select FFAST as Pll input clock*/
+    259             HP1_MDEC = 8191;    /*M devider*/
+    260             HP1_NDEC = 770;     /*N devider*/
+    261             HP1_PDEC = 98;      /*P devider*/
+    262          
+    263             HP1_SELR = 0;       /**/
+    264             HP1_SELI = 16;
+    265             HP1_SELP = 8;
+    266          
+    267             HP1_MODE = 1;             /*Enable PLL*/
+    268          #else
+    269             /*PLL Init 160MHz, to generate 40MHz clock for NAND transfer */
+    270             HP1_MODE = 0x4;     /*Power Down PLL*/
+    271          
+    272             HP1_FIN_SELECT = 0; /*Select FFAST as Pll input clock*/
+    273             HP1_MDEC = 10854;    /*M devider*/
+    274             HP1_NDEC = 1;     /*N devider*/
+    275             HP1_PDEC = 98;      /*P devider*/
+    276          
+    277             HP1_SELR = 0;       /**/
+    278             HP1_SELI = 44;
+    279             HP1_SELP = 21;
+    280          
+    281             HP1_MODE = 1;             /*Enable PLL*/
+    282          #endif
+    283          
+    284             while(!(HP1_STATUS & 1)); /*Wait untill PLL locks*/
+    285          
+    286             /*Configure the deviders*/
+    287             for(int i = FDIV0; FDIV23 >= i ; i++)
+    288             {
+    289                /*Clear Run Bit*/
+    290                *((Int32U *)&FDC0 + i) &= ~(0x1<<0);
+    291                /*Configure Devider*/
+    292                *((Int32U *)&FDC0 + i) = FDIV_Config[i];
+    293             }
+    294          
+    295             for(ClockID = APB0_CLK; SYSCLK_O >= ClockID; ClockID++)
+    296             {
+    297                /*this clocks don't exist*/
+    298                if((12 == ClockID) || (38 == ClockID) || (69 == ClockID) || (70 == ClockID) ||\
+    299                      (84 == ClockID) || (85 == ClockID) || (86 == ClockID)) continue;
+    300          
+    301                /*Init ESR registers*/
+    302                if((I2SRX_BCK0 != ClockID) && (I2SRX_BCK1 != ClockID) && (SYSCLK_O != ClockID))
+    303                {
+    304                   if(I2SRX_BCK0 >ClockID) *((Int32U *)&ESR0 +ClockID) = ESR_Cnfg[ClockID];
+    305                   else *((Int32U *)&ESR0 +ClockID-2) = ESR_Cnfg[ClockID-2];
+    306                }
+    307             }
+    308          
+    309             /*Enable SYS_BASE Deviders*/
+    310             CGU_CnfgBCR(DMN_SYS, 0x1);
+    311             /*PLL1 as SYS_BASE clock*/
+    312             CGU_SelectDomainClk(DMN_SYS,CLK_HPPLL1);
+    313             /*Enable DMN_AHB_APB0 Deviders*/
+    314             CGU_CnfgBCR(DMN_AHB_APB0, 0x1);
+    315             /*PLL1 as DMN_AHB_APB0 clock*/
+    316             CGU_SelectDomainClk(DMN_AHB_APB0,CLK_HPPLL1);
+    317             /*Enable DMN_AHB_APB1 Deviders*/
+    318             CGU_CnfgBCR(DMN_AHB_APB1, 0x1);
+    319             /*CLK_FFAST as DMN_AHB_APB1 clock*/
+    320             CGU_SelectDomainClk(DMN_AHB_APB1,CLK_FFAST);
+    321             /*Enable DMN_AHB_APB2 Deviders*/
+    322             CGU_CnfgBCR(DMN_AHB_APB2, 0x1);
+    323             /*PLL1 as DMN_AHB_APB2 clock*/
+    324             CGU_SelectDomainClk(DMN_AHB_APB2,CLK_HPPLL1);
+    325             /*CLK_FFAST as DMN_AHB_APB3 clock*/
+    326             CGU_SelectDomainClk(DMN_AHB_APB3,CLK_FFAST);
+    327             /*PLL1 as DMN_PCM clock*/
+    328             CGU_SelectDomainClk(DMN_PCM,CLK_HPPLL1);
+    329             /*CLK_FFAST as DMN_UART clock*/
+    330             CGU_SelectDomainClk(DMN_UART,CLK_FFAST);
+    331             /*Enable DMN_CLK1024FS Deviders*/
+    332             CGU_CnfgBCR(DMN_CLK1024FS, 0x1);
+    333             /*CLK_HPPLL0 as DMN_CLK1024FS clock*/
+    334             CGU_SelectDomainClk(DMN_CLK1024FS,CLK_HPPLL0);
+    335             /*CLK_I2SRX_BCK0 as DMN_I2SRX_BCK0 clock*/
+    336             CGU_SelectDomainClk(DMN_I2SRX_BCK0,CLK_I2SRX_BCK0);
+    337             /*CLK_I2SRX_BCK1 as DMN_I2SRX_BCK1 clock*/
+    338             CGU_SelectDomainClk(DMN_I2SRX_BCK1,CLK_I2SRX_BCK1);
+    339             /*PLL1 as DMN_SPI_CLK clock*/
+    340             CGU_SelectDomainClk(DMN_SPI_CLK,CLK_HPPLL1);
+    341             /*CLK_FFAST as DMN_SYSCLK_O clock*/
+    342             CGU_SelectDomainClk(DMN_SYSCLK_O,CLK_FFAST);
+    343          }
+    344          
+    345          /** private functions **/
+    346          void CGU_SelectDomainClk(DOMAIN Domain, IN_CLOCKS Clock)
+    347          {
+    348             switch (*((Int32U *)&SSR0 + Domain) & 0x3)
+    349             {
+    350                case 0:
+    351                case 3:
+    352                   /*Reset Switch*/
+    353                   *((Int32U *)&SCR0 + Domain) = 0x4;
+    354                case 2:
+    355                   /*Select Clock*/
+    356                   *((Int32U *)&FS1_0 + Domain) = Clock;
+    357                   /*Select switch 1*/
+    358                   *((Int32U *)&SCR0 + Domain) = 0x1;
+    359          
+    360                   break;
+    361                case 1:
+    362                   /*Select Clock*/
+    363                   *((Int32U *)&FS2_0 + Domain) = Clock;
+    364                   /*Select switch 2*/
+    365                   *((Int32U *)&SCR0 + Domain) = 0x2;
+    366                   break;
+    367             }
+    368          }
+    369          
+    370          void CGU_CnfgBCR(DOMAIN Domain,Int32U Cnfg)
+    371          {
+    372             if(DMN_AHB_APB2 >= Domain) *((Int32U *)&BCR0 + Domain) = Cnfg;
+    373             if(DMN_CLK1024FS == Domain) BCR7 = Cnfg;
+    374          }
+    375          
+
+   Maximum stack usage in bytes:
+
+   .cstack Function
+   ------- --------
+       4   CGU_CnfgBCR
+       0   CGU_Run_Clock
+       8   CGU_SelectDomainClk
+       0   CGU_Stop_Clock
+       8   InitClock
+         8   -> CGU_CnfgBCR
+         8   -> CGU_Run_Clock
+         8   -> CGU_SelectDomainClk
+         8   -> CGU_Stop_Clock
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+       4  ??DataTable1
+       4  ??DataTable2
+       4  ??DataTable3
+       4  ??DataTable4
+       4  ??DataTable4_1
+       4  ??DataTable4_10
+       4  ??DataTable4_11
+       4  ??DataTable4_12
+       4  ??DataTable4_13
+       4  ??DataTable4_14
+       4  ??DataTable4_15
+       4  ??DataTable4_16
+       4  ??DataTable4_17
+       4  ??DataTable4_18
+       4  ??DataTable4_19
+       4  ??DataTable4_2
+       4  ??DataTable4_20
+       4  ??DataTable4_21
+       4  ??DataTable4_3
+       4  ??DataTable4_4
+       4  ??DataTable4_5
+       4  ??DataTable4_6
+       4  ??DataTable4_7
+       4  ??DataTable4_8
+       4  ??DataTable4_9
+      36  CGU_CnfgBCR
+      22  CGU_Run_Clock
+     110  CGU_SelectDomainClk
+      22  CGU_Stop_Clock
+     356  ESR_Cnfg
+      96  FDIV_Config
+     842  InitClock
+       4  _A_BCR0
+       4  _A_BCR7
+       4  _A_ESR0
+       4  _A_FDC0
+       4  _A_FS1_0
+       4  _A_FS2_0
+       4  _A_HP1_FIN_SELECT
+       4  _A_HP1_MDEC
+       4  _A_HP1_MODE
+       4  _A_HP1_NDEC
+       4  _A_HP1_PDEC
+       4  _A_HP1_SELI
+       4  _A_HP1_SELP
+       4  _A_HP1_SELR
+       4  _A_HP1_STATUS
+       4  _A_PCR0
+       4  _A_SCR0
+       4  _A_SSR0
+
+ 
+    72 bytes in section .noinit (abs)
+   452 bytes in section .rodata
+ 1 132 bytes in section .text
+ 
+ 1 132 bytes of CODE  memory
+   452 bytes of CONST memory
+     0 bytes of DATA  memory (+ 72 bytes shared)
+
+Errors: none
+Warnings: none

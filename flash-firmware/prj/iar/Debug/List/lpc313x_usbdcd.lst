@@ -1,0 +1,958 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        02/Aug/2023  19:53:33
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\sys\lpc313x\lib\lpc313x_usbdcd.c
+#    Command line =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\sys\lpc313x\lib\lpc313x_usbdcd.c
+#        -D BOOT_LEVEL_2 -lcN
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List
+#        -o C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj
+#        --no_cse --no_unroll --no_inline --no_code_motion --no_tbaa
+#        --no_clustering --no_scheduling --debug --endian=little
+#        --cpu=ARM926EJ-S -e --fpu=None --dlib_config "C:\Program Files
+#        (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\ -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\
+#        --cpu_mode thumb -Ol --use_c++_inline
+#    List file    =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List\lpc313x_usbdcd.lst
+#    Object file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj\lpc313x_usbdcd.o
+#
+###############################################################################
+
+C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\sys\lpc313x\lib\lpc313x_usbdcd.c
+      1          /***********************************************************************
+      2           * $Id:: lpc313x_usbdcd.c 3557 2010-05-20 00:31:30Z usb10131           $
+      3           *
+      4           * Project: LPC31xx USB device controller driver
+      5           *
+      6           * Description:
+      7           *     This file contains driver support for the LPC31xx USB device
+      8           *  controller driver.
+      9           *
+     10           ***********************************************************************
+     11           * Software that is described herein is for illustrative purposes only
+     12           * which provides customers with programming information regarding the
+     13           * products. This software is supplied "AS IS" without any warranties.
+     14           * NXP Semiconductors assumes no responsibility or liability for the
+     15           * use of the software, conveys no license or title under any patent,
+     16           * copyright, or mask work right to the product. NXP Semiconductors
+     17           * reserves the right to make changes in the software without
+     18           * notification. NXP Semiconductors also make no representation or
+     19           * warranty that such application will be suitable for the specified
+     20           * use without further testing or modification.
+     21           *********************************************************************/
+     22          
+     23          #include <string.h>
+     24          #include "lpc_usb.h"
+     25          #include "lpc313x_usbotg.h"
+     26          #include "lpc313x_sysreg.h"
+     27          #include "lpc313x_evt_router.h"
+     28          #include "lpc313x_cgu_driver.h"
+     29          #include "lpc313x_usbd_driver.h"
+     30          
+     31          
+     32          #pragma data_alignment=2048
+     33          DQH_T ep_QH[EP_NUM_MAX];
+     34          
+     35          #pragma data_alignment=32
+     36          DTD_T ep_TD[EP_NUM_MAX];
+     37          
+     38          static UNS_32 ep_read_len[EP_NUM_MAX/2];
+     39          volatile UNS_32 DevStatusFS2HS = FALSE;
+     40          static LPC_USBDRV_INIT_T g_drv;
+     41          
+     42          /*
+     43          *  Get Endpoint Physical Address
+     44          *    Parameters:      EPNum: Endpoint Number
+     45          *                       EPNum.0..3: Address
+     46          *                       EPNum.7:    Dir
+     47          *    Return Value:    Endpoint Physical Address
+     48          */
+     49          
+     50          static UNS_32 EPAdr(UNS_32 EPNum)
+     51          {
+     52             UNS_32 val;
+     53          
+     54             val = (EPNum & 0x0F) << 1;
+     55             if (EPNum & 0x80)
+     56             {
+     57                val += 1;
+     58             }
+     59             return (val);
+     60          }
+     61          
+     62          
+     63          /*
+     64          *  USB Connect Function
+     65          *   Called by the User to Connect/Disconnect USB
+     66          *    Parameters:      con:   Connect/Disconnect
+     67          *    Return Value:    None
+     68          */
+     69          
+     70          void USB_Connect(BOOL_32 con)
+     71          {
+     72             if (con)
+     73                USB_OTG->usbcmd |= USBCMD_RS;
+     74             else
+     75                USB_OTG->usbcmd &= ~USBCMD_RS;
+     76          }
+     77          
+     78          
+     79          /*
+     80          *  USB Reset Function
+     81          *   Called automatically on USB Reset
+     82          *    Return Value:    None
+     83          */
+     84          
+     85          void USB_Reset(void)
+     86          {
+     87             UNS_32 i;
+     88          
+     89             /* force high speed */
+     90             DevStatusFS2HS = TRUE;  //FALSE;
+     91          
+     92             /* disable all EPs */
+     93             for (i = 1; i < EP_NUM_MAX / 2; i++)
+     94             {
+     95               USB_OTG->endptctrl[i] &= ~(EPCTRL_RXE | EPCTRL_TXE);
+     96             }
+     97          
+     98             /* Clear all pending interrupts */
+     99             USB_OTG->endptnak   = 0xFFFFFFFF;
+    100             USB_OTG->endptnaken = 0;
+    101             USB_OTG->usbsts     = 0xFFFFFFFF;
+    102             USB_OTG->endptsetupstat = USB_OTG->endptsetupstat;
+    103             USB_OTG->endptcomplete  = USB_OTG->endptcomplete;
+    104             while (USB_OTG->endptprime)                  /* Wait until all bits are 0 */
+    105             {
+    106             }
+    107             USB_OTG->endptflush = 0xFFFFFFFF;
+    108             while (USB_OTG->endptflush); /* Wait until all bits are 0 */
+    109          
+    110          
+    111             /* Set the interrupt Threshold control interval to 0 */
+    112             USB_OTG->usbcmd &= ~0x00FF0000;
+    113          
+    114             /* Zero out the Endpoint queue heads */
+    115             memset((void*)ep_QH, 0, EP_NUM_MAX * sizeof(DQH_T));
+    116             /* Zero out the device transfer descriptors */
+    117             memset((void*)ep_TD, 0, EP_NUM_MAX * sizeof(DTD_T));
+    118             memset((void*)ep_read_len, 0, sizeof(ep_read_len));
+    119          
+    120             /* Configure the Endpoint List Address */
+    121             /* make sure it in on 64 byte boundary !!! */
+    122             /* init list address */
+    123             USB_OTG->asynclistaddr__endpointlistaddr = (UNS_32)ep_QH;
+    124             /* Initialize device queue heads for non ISO endpoint only */
+    125             for (i = 0; i < EP_NUM_MAX; i++)
+    126             {
+    127                ep_QH[i].next_dTD = (UNS_32) & ep_TD[i];
+    128             }
+    129             /* Enable interrupts */
+    130             USB_OTG->usbintr =  USBSTS_UI
+    131                                 | USBSTS_UEI
+    132                                 | USBSTS_PCI
+    133                                 | USBSTS_URI
+    134                                 | USBSTS_SLI
+    135                                 | USBSTS_NAKI;
+    136          
+    137             /* enable ep0 IN and ep0 OUT */
+    138             ep_QH[0].cap  = QH_MAXP(g_drv.ep0_maxp)
+    139                             | QH_IOS
+    140                             | QH_ZLT;
+    141             ep_QH[1].cap  = QH_MAXP(g_drv.ep0_maxp)
+    142                             | QH_IOS
+    143                             | QH_ZLT;
+    144          
+    145             /* enable EP0 */
+    146             USB_OTG->endptctrl[0] = EPCTRL_RXE | EPCTRL_RXR | EPCTRL_TXE | EPCTRL_TXR;
+    147          
+    148          }
+    149          
+    150          
+    151          
+    152          /*
+    153          *  USB Remote Wakeup Function
+    154          *   Called automatically on USB Remote Wakeup
+    155          *    Return Value:    None
+    156          */
+    157          
+    158          void USB_WakeUp(void)
+    159          {
+    160          
+    161             //if (USB_DeviceStatus & USB_GETSTATUS_REMOTE_WAKEUP)
+    162             {
+    163                /* Set FPR bit in PORTSCX reg p63 */
+    164                USB_OTG->portsc1 |= USBPRTS_FPR ;
+    165             }
+    166          }
+    167          
+    168          
+    169          /*
+    170          *  USB Remote Wakeup Configuration Function
+    171          *    Parameters:      cfg:   Enable/Disable
+    172          *    Return Value:    None
+    173          */
+    174          
+    175          void USB_WakeUpCfg(UNS_32 cfg)
+    176          {
+    177             /* Not needed */
+    178          }
+    179          
+    180          
+    181          /*
+    182          *  USB Set Address Function
+    183          *    Parameters:      adr:   USB Address
+    184          *    Return Value:    None
+    185          */
+    186          
+    187          void USB_SetAddress(UNS_32 adr)
+    188          {
+    189             USB_OTG->periodiclistbase__deviceaddr = USBDEV_ADDR(adr);
+    190             USB_OTG->periodiclistbase__deviceaddr |= USBDEV_ADDR_AD;
+    191          }
+    192          
+    193          
+    194          /*
+    195          *  USB set test mode Function
+    196          *    Parameters:      mode:   test mode
+    197          *    Return Value:    TRUE if supported else FALSE
+    198          */
+    199          
+    200          BOOL_32 USB_SetTestMode(UNS_8 mode)
+    201          {
+    202             UNS_32 portsc;
+    203             if ((mode > 0) && (mode < 8))
+    204             {
+    205                portsc = USB_OTG->portsc1 & ~(0xF << 16);
+    206          
+    207                USB_OTG->portsc1 = portsc | (mode << 16);
+    208                return TRUE;
+    209             }
+    210             return (FALSE);
+    211          }
+    212          
+    213          /*
+    214          *  USB Configure Function
+    215          *    Parameters:      cfg:   Configure/Deconfigure
+    216          *    Return Value:    None
+    217          */
+    218          
+    219          void USB_Configure(UNS_32 cfg)
+    220          {
+    221          
+    222          }
+    223          
+    224          /*
+    225          *  Configure USB Endpoint according to Descriptor
+    226          *    Parameters:      pEPD:  Pointer to Endpoint Descriptor
+    227          *    Return Value:    None
+    228          */
+    229          
+    230          void USB_ConfigEP(USB_ENDPOINT_DESCRIPTOR *pEPD)
+    231          {
+    232             UNS_32 num, lep;
+    233             UNS_32 ep_cfg;
+    234             UNS_8  bmAttributes;
+    235          
+    236             lep = pEPD->bEndpointAddress & 0x7F;
+    237             num = EPAdr(pEPD->bEndpointAddress);
+    238          
+    239             ep_cfg = USB_OTG->endptctrl[lep];
+    240             /* mask the attributes we are not-intersetd in */
+    241             bmAttributes = pEPD->bmAttributes & USB_ENDPOINT_TYPE_MASK;
+    242             /* set EP type */
+    243             if (bmAttributes != USB_ENDPOINT_TYPE_ISOCHRONOUS)
+    244             {
+    245                /* init EP capabilities */
+    246                ep_QH[num].cap  = QH_MAXP(pEPD->wMaxPacketSize)
+    247                                  | QH_IOS
+    248                                  | QH_ZLT ;
+    249          
+    250                /* The next DTD pointer is INVALID */
+    251                ep_TD[num].next_dTD = 0x01 ;
+    252             }
+    253             else
+    254             {
+    255                /* init EP capabilities */
+    256                ep_QH[num].cap  = QH_MAXP(0x400) | QH_ZLT ;
+    257                //tmudsDcdIP9028_IsoPreparedTD ( ) ;
+    258                //tmudsDcdIP9028_IsoPrime ( ) ;
+    259             }
+    260             /* setup EP control register */
+    261             if (pEPD->bEndpointAddress & 0x80)
+    262             {
+    263                ep_cfg &= ~0xFFFF0000;
+    264                ep_cfg |= EPCTRL_TX_TYPE(bmAttributes)
+    265                          | EPCTRL_TXR;
+    266             }
+    267             else
+    268             {
+    269                ep_cfg &= ~0xFFFF;
+    270                ep_cfg |= EPCTRL_RX_TYPE(bmAttributes)
+    271                          | EPCTRL_RXR;
+    272             }
+    273             USB_OTG->endptctrl[lep] = ep_cfg;
+    274          }
+    275          
+    276          
+    277          /*
+    278          *  Set Direction for USB Control Endpoint
+    279          *    Parameters:      dir:   Out (dir == 0), In (dir <> 0)
+    280          *    Return Value:    None
+    281          */
+    282          
+    283          void USB_DirCtrlEP(UNS_32 dir)
+    284          {
+    285             /* Not needed */
+    286          }
+    287          
+    288          
+    289          /*
+    290          *  Enable USB Endpoint
+    291          *    Parameters:      EPNum: Endpoint Number
+    292          *                       EPNum.0..3: Address
+    293          *                       EPNum.7:    Dir
+    294          *    Return Value:    None
+    295          */
+    296          
+    297          void USB_EnableEP(UNS_32 EPNum)
+    298          {
+    299             UNS_32 lep, bitpos;
+    300          
+    301             lep = EPNum & 0x0F;
+    302          
+    303             if (EPNum & 0x80)
+    304             {
+    305                USB_OTG->endptctrl[lep] |= EPCTRL_TXE;
+    306             }
+    307             else
+    308             {
+    309                USB_OTG->endptctrl[lep] |= EPCTRL_RXE;
+    310             }
+    311          
+    312             /* enable NAK interrupt */
+    313             bitpos = USB_EP_BITPOS(EPNum);
+    314             USB_OTG->endptnaken |= _BIT(bitpos);
+    315          }
+    316          
+    317          
+    318          /*
+    319          *  Disable USB Endpoint
+    320          *    Parameters:      EPNum: Endpoint Number
+    321          *                       EPNum.0..3: Address
+    322          *                       EPNum.7:    Dir
+    323          *    Return Value:    None
+    324          */
+    325          
+    326          void USB_DisableEP(UNS_32 EPNum)
+    327          {
+    328             UNS_32 lep, bitpos;
+    329          
+    330             lep = EPNum & 0x0F;
+    331          
+    332             if (EPNum & 0x80)
+    333             {
+    334                USB_OTG->endptctrl[lep] &= ~EPCTRL_TXE;
+    335             }
+    336             else
+    337             {
+    338                /* disable NAK interrupt */
+    339                bitpos = USB_EP_BITPOS(EPNum);
+    340                USB_OTG->endptnaken &= ~_BIT(bitpos);
+    341                USB_OTG->endptctrl[lep] &= ~EPCTRL_RXE;
+    342             }
+    343          }
+    344          
+    345          
+    346          /*
+    347          *  Reset USB Endpoint
+    348          *    Parameters:      EPNum: Endpoint Number
+    349          *                       EPNum.0..3: Address
+    350          *                       EPNum.7:    Dir
+    351          *    Return Value:    None
+    352          */
+    353          
+    354          void USB_ResetEP(UNS_32 EPNum)
+    355          {
+    356             UNS_32 bit_pos = USB_EP_BITPOS(EPNum);
+    357             UNS_32 lep = EPNum & 0x0F;
+    358          
+    359             /* flush EP buffers */
+    360             USB_OTG->endptflush = _BIT(bit_pos);
+    361             while (USB_OTG->endptflush & _BIT(bit_pos));
+    362             /* reset data toggles */
+    363             if (EPNum & 0x80)
+    364             {
+    365                USB_OTG->endptctrl[lep] |= EPCTRL_TXR;
+    366             }
+    367             else
+    368             {
+    369                USB_OTG->endptctrl[lep] |= EPCTRL_RXR;
+    370             }
+    371          }
+    372          
+    373          
+    374          /*
+    375          *  Checks if endpoint is enabled
+    376          *    Parameters:      EPNum: Endpoint Number
+    377          *                       EPNum.0..3: Address
+    378          *                       EPNum.7:    Dir
+    379          *    Return Value:    1 for enabled
+    380          */
+    381          UNS_32 IsEPEnabled(UNS_32 EPNum)
+    382          {
+    383             UNS_32 lep = EPNum & 0x0F;
+    384             if (EPNum & 0x80)
+    385             {
+    386                if (USB_DEV_EPCTRLX(lep) & EPCTRL_TXE)
+    387                   return 1;
+    388                else
+    389                   return 0;
+    390             }
+    391             else
+    392             {
+    393                if (USB_DEV_EPCTRLX(lep) & EPCTRL_RXE)
+    394                   return 1;
+    395                else
+    396                   return 0;
+    397             }
+    398          }
+    399          
+    400          
+    401          /*
+    402          *  Set Stall for USB Endpoint
+    403          *    Parameters:      EPNum: Endpoint Number
+    404          *                       EPNum.0..3: Address
+    405          *                       EPNum.7:    Dir
+    406          *    Return Value:    None
+    407          */
+    408          
+    409          void USB_SetStallEP(UNS_32 EPNum)
+    410          {
+    411             UNS_32 lep;
+    412          
+    413             lep = EPNum & 0x0F;
+    414          
+    415             if (EPNum & 0x80)
+    416             {
+    417                USB_OTG->endptctrl[lep] |= EPCTRL_TXS;
+    418             }
+    419             else
+    420             {
+    421                USB_OTG->endptctrl[lep] |= EPCTRL_RXS;
+    422             }
+    423          }
+    424          
+    425          
+    426          /*
+    427          *  Clear Stall for USB Endpoint
+    428          *    Parameters:      EPNum: Endpoint Number
+    429          *                       EPNum.0..3: Address
+    430          *                       EPNum.7:    Dir
+    431          *    Return Value:    None
+    432          */
+    433          
+    434          void USB_ClrStallEP(UNS_32 EPNum)
+    435          {
+    436             UNS_32 lep;
+    437          
+    438             lep = EPNum & 0x0F;
+    439          
+    440             if (EPNum & 0x80)
+    441             {
+    442                USB_OTG->endptctrl[lep] &= ~EPCTRL_TXS;
+    443                /* reset data toggle */
+    444                USB_OTG->endptctrl[lep] |= EPCTRL_TXR;
+    445             }
+    446             else
+    447             {
+    448                USB_OTG->endptctrl[lep] &= ~EPCTRL_RXS;
+    449                /* reset data toggle */
+    450                USB_OTG->endptctrl[lep] |= EPCTRL_RXR;
+    451             }
+    452          }
+    453          
+    454          void USB_ProgDTD(UNS_32 Edpt, UNS_32 ptrBuff, UNS_32 TsfSize)
+    455          {
+    456             DTD_T*  pDTD ;
+    457          
+    458             pDTD    = (DTD_T*) & ep_TD[ Edpt ];
+    459          
+    460             /* Zero out the device transfer descriptors */
+    461             memset((void*)pDTD, 0, sizeof(DTD_T));
+    462             /* The next DTD pointer is INVALID */
+    463             pDTD->next_dTD = 0x01 ;
+    464          
+    465             /* Length */
+    466             pDTD->total_bytes = ((TsfSize & 0x7fff) << 16);
+    467             pDTD->total_bytes |= TD_IOC ;
+    468             pDTD->total_bytes |= 0x80 ;
+    469          
+    470             pDTD->buffer0 = ptrBuff;
+    471             pDTD->buffer1 = (ptrBuff + 0x1000) & 0xfffff000;
+    472             pDTD->buffer2 = (ptrBuff + 0x2000) & 0xfffff000;
+    473             pDTD->buffer3 = (ptrBuff + 0x3000) & 0xfffff000;
+    474             pDTD->buffer4 = (ptrBuff + 0x4000) & 0xfffff000;
+    475          
+    476          
+    477             ep_QH[Edpt].next_dTD = (UNS_32)(&ep_TD[ Edpt ]);
+    478             ep_QH[Edpt].total_bytes &= (~0xC0) ;
+    479          }
+    480          /*
+    481          *  Read USB Endpoint Data
+    482          *    Parameters:      EPNum: Endpoint Number
+    483          *                       EPNum.0..3: Address
+    484          *                       EPNum.7:    Dir
+    485          *                     pData: Pointer to Data Buffer
+    486          *    Return Value:    Number of bytes read
+    487          */
+    488          UNS_32 USB_ReadSetupPkt(UNS_32 EPNum, UNS_32 *pData)
+    489          {
+    490             UNS_32  setup_int, cnt = 0;
+    491             UNS_32 num = EPAdr(EPNum);
+    492          
+    493             setup_int = USB_OTG->endptsetupstat ;
+    494             /* Clear the setup interrupt */
+    495             USB_OTG->endptsetupstat = setup_int;
+    496             /* ********************************** */
+    497             /*  Check if we have received a setup */
+    498             /* ********************************** */
+    499          
+    500             if (setup_int & _BIT(0))                    /* Check only for bit 0 */
+    501                /* No setup are admitted on other endpoints than 0 */
+    502             {
+    503                do
+    504                {
+    505                   /* Setup in a setup - must considere only the second setup */
+    506                   /*- Set the tripwire */
+    507                   USB_OTG->usbcmd |= USBCMD_SUTW ;
+    508          
+    509                   /* Transfer Set-up data to the gtmudsCore_Request buffer */
+    510                   pData[0] = ep_QH[num].setup[0];
+    511                   pData[1] = ep_QH[num].setup[1];
+    512                   cnt = 8;
+    513          
+    514                }
+    515                while (!(USB_OTG->usbcmd & USBCMD_SUTW)) ;
+    516          
+    517                /* setup in a setup - Clear the tripwire */
+    518                USB_OTG->usbcmd &= (~USBCMD_SUTW);
+    519             }
+    520             while ((setup_int = USB_OTG->endptsetupstat) != 0)
+    521             {
+    522                /* Clear the setup interrupt */
+    523                USB_OTG->endptsetupstat = setup_int;
+    524             }
+    525          
+    526             return cnt;
+    527          }
+    528          
+    529          /*
+    530          *  Enque read request
+    531          *    Parameters:      EPNum: Endpoint Number
+    532          *                       EPNum.0..3: Address
+    533          *                       EPNum.7:    Dir
+    534          *                     pData: Pointer to Data Buffer
+    535          *    Return Value:    Number of bytes read
+    536          */
+    537          
+    538          UNS_32 USB_ReadReqEP(UNS_32 EPNum, UNS_8 *pData, UNS_32 len)
+    539          {
+    540             UNS_32 num = EPAdr(EPNum);
+    541             UNS_32 n = USB_EP_BITPOS(EPNum);
+    542          
+    543             USB_ProgDTD(num, (UNS_32)pData, len);
+    544             ep_read_len[EPNum & 0x0F] = len;
+    545          
+    546             /* prime the endpoint for read */
+    547             USB_OTG->endptprime |= _BIT(n) ;
+    548          
+    549             /* check if priming succeeded */
+    550             while (USB_OTG->endptprime & _BIT(n));
+    551          
+    552             return len;
+    553          }
+    554          
+    555          /*
+    556          *  Read USB Endpoint Data
+    557          *    Parameters:      EPNum: Endpoint Number
+    558          *                       EPNum.0..3: Address
+    559          *                       EPNum.7:    Dir
+    560          *                     pData: Pointer to Data Buffer
+    561          *    Return Value:    Number of bytes read
+    562          */
+    563          
+    564          UNS_32 USB_ReadEP(UNS_32 EPNum, UNS_8 *pData)
+    565          {
+    566             UNS_32 cnt, n;
+    567             DTD_T*  pDTD ;
+    568          
+    569             n = EPAdr(EPNum);
+    570             pDTD    = (DTD_T*) & ep_TD [ n ] ;
+    571          
+    572             /* return the total bytes read */
+    573             cnt  = (pDTD->total_bytes >> 16) & 0x7FFF;
+    574             cnt = ep_read_len[EPNum & 0x0F] - cnt;
+    575          
+    576             return (cnt);
+    577          }
+    578          
+    579          
+    580          /*
+    581          *  Write USB Endpoint Data
+    582          *    Parameters:      EPNum: Endpoint Number
+    583          *                       EPNum.0..3: Address
+    584          *                       EPNum.7:    Dir
+    585          *                     pData: Pointer to Data Buffer
+    586          *                     cnt:   Number of bytes to write
+    587          *    Return Value:    Number of bytes written
+    588          */
+    589          
+    590          UNS_32 USB_WriteEP(UNS_32 EPNum, UNS_8 *pData, UNS_32 cnt)
+    591          {
+    592             UNS_32 n = USB_EP_BITPOS(EPNum);
+    593          
+    594             USB_ProgDTD(EPAdr(EPNum), (UNS_32)pData, cnt);
+    595          
+    596             /* prime the endpoint for transmit */
+    597             USB_OTG->endptprime |= _BIT(n) ;
+    598          
+    599             /* check if priming succeeded */
+    600             while (USB_OTG->endptprime & _BIT(n));
+    601          
+    602             return (cnt);
+    603          }
+    604          
+    605          /*
+    606          *  USB Initialize Function
+    607          *   Called by the User to initialize USB
+    608          *    Return Value:    None
+    609          */
+    610          
+    611          void USB_Init(LPC_USBDRV_INIT_T* cbs)
+    612          {
+    613             /* enable USB PLL */
+    614             UNS_32 bank = EVT_GET_BANK(EVT_usb_atx_pll_lock);
+    615             UNS_32 bit_pos = EVT_usb_atx_pll_lock & 0x1F;
+    616          
+    617             /* copy callbacks */
+    618             memcpy(&g_drv, cbs, sizeof(LPC_USBDRV_INIT_T));
+    619             /*maxp for EP0 should be atleast 8 */
+    620             if (g_drv.ep0_maxp == 0)
+    621                g_drv.ep0_maxp = 64;
+    622          
+    623             /* enable USB to AHB clock */
+    624             cgu_clk_en_dis(CGU_SB_USB_OTG_AHB_CLK_ID, TRUE);
+    625             /* enable clock to Event router */
+    626             cgu_clk_en_dis(CGU_SB_EVENT_ROUTER_PCLK_ID, TRUE);
+    627          
+    628             /* reset USB block */
+    629             cgu_soft_reset_module(USB_OTG_AHB_RST_N_SOFT);
+    630          
+    631             /* enable USB OTG PLL */
+    632             SYS_REGS->usb_atx_pll_pd_reg = 0x0;
+    633             /* wait for PLL to lock */
+    634             while (!(EVTR_REGS->rsr[bank] & _BIT(bit_pos)));
+    635          
+    636             /* enable USB AHB clock */
+    637             cgu_clk_en_dis(CGU_SB_USB_OTG_AHB_CLK_ID, TRUE);
+    638          
+    639             /* reset the controller */
+    640             USB_OTG->usbcmd = USBCMD_RST;
+    641             /* wait for reset to complete */
+    642             while (USB_OTG->usbcmd & USBCMD_RST);
+    643          
+    644             /* Program the controller to be the USB device controller */
+    645             USB_OTG->usbmode =   USBMODE_CM_DEV
+    646                                  /*| USBMODE_SDIS*/
+    647                                  | USBMODE_SLOM ;
+    648          
+    649             /* set OTG transcever in proper state */
+    650             USB_OTG->otgsc = _BIT(3) | _BIT(0);
+    651          
+    652             /* large burst cycle */
+    653             USB_OTG->burstsize = 0x4040;
+    654          
+    655             USB_Reset();
+    656             USB_SetAddress(0);
+    657          }
+    658          
+    659          
+    660          /*
+    661          *  USB Interrupt Service Routine
+    662          */
+    663          
+    664          void USB_ISR(void)
+    665          {
+    666             UNS_32 disr, val, n;
+    667          
+    668             disr = USB_OTG->usbsts;                      /* Device Interrupt Status */
+    669             USB_OTG->usbsts = disr;
+    670          
+    671             /* Device Status Interrupt (Reset, Connect change, Suspend/Resume) */
+    672             if (disr & USBSTS_URI)                      /* Reset */
+    673             {
+    674                USB_Reset();
+    675                if (g_drv.USB_Reset_Event)
+    676                   g_drv.USB_Reset_Event();
+    677                goto isr_end;
+    678             }
+    679          
+    680             if (disr & USBSTS_SLI)                   /* Suspend */
+    681             {
+    682                USB_OTG->otgsc &= ~_BIT(0);
+    683                if (g_drv.USB_Suspend_Event)
+    684                   g_drv.USB_Suspend_Event();
+    685             }
+    686          
+    687             if (disr & USBSTS_PCI)                  /* Resume */
+    688             {
+    689                /* check if device isoperating in HS mode or full speed */
+    690                if (USB_OTG->portsc1 & _BIT(9))
+    691                   DevStatusFS2HS = TRUE;
+    692          
+    693                USB_OTG->otgsc |= _BIT(0);
+    694          
+    695                if (g_drv.USB_Resume_Event)
+    696                   g_drv.USB_Resume_Event();
+    697             }
+    698          
+    699             /* handle setup status interrupts */
+    700             val = USB_OTG->endptsetupstat;
+    701             /* Only EP0 will have setup packets so call EP0 handler */
+    702             if (val)
+    703             {
+    704                /* Clear the endpoint complete CTRL OUT & IN when */
+    705                /* a Setup is received */
+    706                USB_OTG->endptcomplete = 0x00010001;
+    707                /* enable NAK inetrrupts */
+    708                USB_OTG->endptnaken |= 0x00010001;
+    709                if (g_drv.USB_P_EP[0])
+    710                   g_drv.USB_P_EP[0](USB_EVT_SETUP);
+    711             }
+    712          
+    713             /* handle completion interrupts */
+    714             val = USB_OTG->endptcomplete;
+    715             if (val)
+    716             {
+    717                USB_OTG->endptnak = val;
+    718                for (n = 0; n < EP_NUM_MAX / 2; n++)
+    719                {
+    720                   if (val & _BIT(n))
+    721                   {
+    722                      if (g_drv.USB_P_EP[n])
+    723                         g_drv.USB_P_EP[n](USB_EVT_OUT);
+    724          
+    725                      USB_OTG->endptcomplete = _BIT(n);
+    726                   }
+    727                   if (val & _BIT(n + 16))
+    728                   {
+    729                      ep_TD [(n << 1) + 1 ].total_bytes &= 0xC0;
+    730                      if (g_drv.USB_P_EP[n])
+    731                         g_drv.USB_P_EP[n](USB_EVT_IN);
+    732          
+    733                      USB_OTG->endptcomplete = _BIT(n + 16);
+    734                   }
+    735                }
+    736             }
+    737          
+    738             if (disr & USBSTS_NAKI)
+    739             {
+    740                val = USB_OTG->endptnak;
+    741                val &= USB_OTG->endptnaken;
+    742                /* handle NAK interrupts */
+    743                if (val)
+    744                {
+    745                   for (n = 0; n < EP_NUM_MAX / 2; n++)
+    746                   {
+    747          
+    748                      if (val & _BIT(n))
+    749                      {
+    750                         if (g_drv.USB_P_EP[n])
+    751                            g_drv.USB_P_EP[n](USB_EVT_OUT_NAK);
+    752                      }
+    753                      if (val & _BIT(n + 16))
+    754                      {
+    755                         if (g_drv.USB_P_EP[n])
+    756                            g_drv.USB_P_EP[n](USB_EVT_IN_NAK);
+    757                      }
+    758                   }
+    759          
+    760                   USB_OTG->endptnak = val;
+    761                }
+    762             }
+    763          
+    764             /* Start of Frame Interrupt */
+    765             if (disr & USBSTS_SRI)
+    766             {
+    767                if (g_drv.USB_SOF_Event)
+    768                   g_drv.USB_SOF_Event();
+    769             }
+    770          
+    771             /* Error Interrupt */
+    772             if (disr & USBSTS_UEI)
+    773             {
+    774                if (g_drv.USB_Error_Event)
+    775                   g_drv.USB_Error_Event(disr);
+    776             }
+    777          
+    778          isr_end:
+    779             return;
+    780          }
+
+   Maximum stack usage in bytes:
+
+   .cstack Function
+   ------- --------
+       4   EPAdr
+       4   IsEPEnabled
+       4   USB_ClrStallEP
+      24   USB_ConfigEP
+        24   -> EPAdr
+       0   USB_Configure
+       4   USB_Connect
+       0   USB_DirCtrlEP
+       4   USB_DisableEP
+       8   USB_EnableEP
+      16   USB_ISR
+        16   -- Indirect call
+        16   -> USB_Reset
+      16   USB_Init
+        16   -> USB_Reset
+        16   -> USB_SetAddress
+        16   -> __aeabi_memcpy
+        16   -> cgu_clk_en_dis
+        16   -> cgu_soft_reset_module
+      24   USB_ProgDTD
+        24   -> __aeabi_memset
+       8   USB_ReadEP
+         8   -> EPAdr
+      24   USB_ReadReqEP
+        24   -> EPAdr
+        24   -> USB_ProgDTD
+      16   USB_ReadSetupPkt
+        16   -> EPAdr
+       8   USB_Reset
+         8   -> __aeabi_memset
+       8   USB_ResetEP
+       0   USB_SetAddress
+       4   USB_SetStallEP
+       4   USB_SetTestMode
+       0   USB_WakeUp
+       0   USB_WakeUpCfg
+      16   USB_WriteEP
+        16   -> EPAdr
+        16   -> USB_ProgDTD
+       4   cgu_clk_en_dis
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+       4  ??DataTable10
+       4  ??DataTable10_1
+       4  ??DataTable11
+       4  ??DataTable11_1
+       4  ??DataTable11_2
+       4  ??DataTable12
+       4  ??DataTable13
+       4  ??DataTable16
+       4  ??DataTable17
+       4  ??DataTable17_1
+       4  ??DataTable17_2
+       4  ??DataTable17_3
+       4  ??DataTable17_4
+       4  ??DataTable17_5
+       4  ??DataTable17_6
+       4  ??DataTable18
+       4  ??DataTable18_1
+       4  ??DataTable18_10
+       4  ??DataTable18_11
+       4  ??DataTable18_12
+       4  ??DataTable18_13
+       4  ??DataTable18_14
+       4  ??DataTable18_15
+       4  ??DataTable18_16
+       4  ??DataTable18_2
+       4  ??DataTable18_3
+       4  ??DataTable18_4
+       4  ??DataTable18_5
+       4  ??DataTable18_6
+       4  ??DataTable18_7
+       4  ??DataTable18_8
+       4  ??DataTable18_9
+       4  ??DataTable7
+       4  ??DataTable7_1
+       4  ??DataTable8
+       4  ??DataTable8_1
+       4  ??DataTable8_2
+       4  ??DataTable8_3
+       4  ??DataTable8_4
+       4  ??DataTable8_5
+       4  ??DataTable8_6
+       4  ??DataTable8_7
+       4  ??DataTable9
+       4  ??DataTable9_1
+       4  ??DataTable9_2
+       4  ??DataTable9_3
+       4  ??DataTable9_4
+       4  ??DataTable9_5
+       4  ??DataTable9_6
+       4  ??DataTable9_7
+       4  ??DataTable9_8
+       4  ??DataTable9_9
+       4  DevStatusFS2HS
+      18  EPAdr
+      66  IsEPEnabled
+      96  USB_ClrStallEP
+     158  USB_ConfigEP
+       2  USB_Configure
+      34  USB_Connect
+       2  USB_DirCtrlEP
+      86  USB_DisableEP
+      88  USB_EnableEP
+     446  USB_ISR
+     126  USB_Init
+     150  USB_ProgDTD
+      42  USB_ReadEP
+      80  USB_ReadReqEP
+     100  USB_ReadSetupPkt
+     236  USB_Reset
+      92  USB_ResetEP
+      22  USB_SetAddress
+      56  USB_SetStallEP
+      46  USB_SetTestMode
+      14  USB_WakeUp
+       2  USB_WakeUpCfg
+      64  USB_WriteEP
+      66  cgu_clk_en_dis
+     512  ep_QH
+     256  ep_TD
+      16  ep_read_len
+      60  g_drv
+
+ 
+   848 bytes in section .bss
+ 2 300 bytes in section .text
+ 
+ 2 300 bytes of CODE memory
+   848 bytes of DATA memory
+
+Errors: none
+Warnings: none

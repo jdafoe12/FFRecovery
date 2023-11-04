@@ -1,0 +1,374 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        02/Aug/2023  19:53:33
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\sys\lpc313x\usb\usbdesc.c
+#    Command line =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\sys\lpc313x\usb\usbdesc.c
+#        -D BOOT_LEVEL_2 -lcN
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List
+#        -o C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj
+#        --no_cse --no_unroll --no_inline --no_code_motion --no_tbaa
+#        --no_clustering --no_scheduling --debug --endian=little
+#        --cpu=ARM926EJ-S -e --fpu=None --dlib_config "C:\Program Files
+#        (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\ -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\
+#        --cpu_mode thumb -Ol --use_c++_inline
+#    List file    =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List\usbdesc.lst
+#    Object file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj\usbdesc.o
+#
+###############################################################################
+
+C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\sys\lpc313x\usb\usbdesc.c
+      1          /*--------------------------------------------------------------------------
+      2           * U S B  -  K e r n e l
+      3           *--------------------------------------------------------------------------
+      4           * Name:    usbdesc.c
+      5           * Purpose: USB Descriptors
+      6           * Version: V1.20
+      7           *--------------------------------------------------------------------------
+      8           * This software is supplied "AS IS" without any warranties, express,
+      9           * implied or statutory, including but not limited to the implied
+     10           * warranties of fitness for purpose, satisfactory quality and
+     11           * noninfringement. Keil extends you a royalty-free right to reproduce
+     12           * and distribute executable files created using this software for use
+     13           * on NXP ARM microcontroller devices only. Nothing else gives
+     14           * you the right to use this software.
+     15           *
+     16           * Copyright (c) 2005-2009 Keil Software.
+     17           * Adaption to LPCxxxx, Copyright (c) 2009 NXP.
+     18           *--------------------------------------------------------------------------
+     19           * History:
+     20           *          V1.20 Changed string descriptor handling
+     21           *                Changed HID Report Descriptor
+     22           *          V1.00 Initial Version
+     23           *--------------------------------------------------------------------------*/
+     24          
+     25          #include "lpc_usb.h"
+     26          #include "usbcfg.h"
+     27          #include "usbdesc.h"
+     28          #include "msc.h"
+     29          #include "mscuser.h"
+     30          
+     31          
+     32          /* USB Standard Device Descriptor */
+     33          const UNS_8 USB_DeviceDescriptor[] =
+     34          {
+     35             USB_DEVICE_DESC_SIZE,              /* bLength */
+     36             USB_DEVICE_DESCRIPTOR_TYPE,        /* bDescriptorType */
+     37             WBVAL(0x0200), /* 2.00 */          /* bcdUSB */
+     38             0x00,                              /* bDeviceClass */
+     39             0x00,                              /* bDeviceSubClass */
+     40             0x00,                              /* bDeviceProtocol */
+     41             USB_MAX_PACKET0,                   /* bMaxPacketSize0 */
+     42             WBVAL(0x1FC9),                     /* idVendor */
+     43             WBVAL(0x0104),                     /* idProduct */
+     44             WBVAL(0x0100), /* 2.00 */          /* bcdDevice */
+     45             0x01,                              /* iManufacturer */
+     46             0x02,                              /* iProduct */
+     47             0x03,                              /* iSerialNumber */
+     48             0x01                               /* bNumConfigurations */
+     49          };
+     50          
+     51          /* USB FSConfiguration Descriptor */
+     52          /*   All Descriptors (Configuration, Interface, Endpoint, Class, Vendor */
+     53          const UNS_8 USB_FSConfigDescriptor[] =
+     54          {
+     55             /* Configuration 1 */
+     56             USB_CONFIGUARTION_DESC_SIZE,       /* bLength */
+     57             USB_CONFIGURATION_DESCRIPTOR_TYPE, /* bDescriptorType */
+     58             WBVAL(                             /* wTotalLength */
+     59                1*USB_CONFIGUARTION_DESC_SIZE +
+     60                1*USB_INTERFACE_DESC_SIZE     +
+     61                2*USB_ENDPOINT_DESC_SIZE
+     62             ),
+     63             0x01,                              /* bNumInterfaces */
+     64             0x01,                              /* bConfigurationValue */
+     65             0x00,                              /* iConfiguration */
+     66             USB_CONFIG_SELF_POWERED,           /* bmAttributes */
+     67             USB_CONFIG_POWER_MA(100),          /* bMaxPower */
+     68             /* Interface 0, Alternate Setting 0, MSC Class */
+     69             USB_INTERFACE_DESC_SIZE,           /* bLength */
+     70             USB_INTERFACE_DESCRIPTOR_TYPE,     /* bDescriptorType */
+     71             0x00,                              /* bInterfaceNumber */
+     72             0x00,                              /* bAlternateSetting */
+     73             0x02,                              /* bNumEndpoints */
+     74             USB_DEVICE_CLASS_STORAGE,          /* bInterfaceClass */
+     75             MSC_SUBCLASS_SCSI,                 /* bInterfaceSubClass */
+     76             MSC_PROTOCOL_BULK_ONLY,            /* bInterfaceProtocol */
+     77             0x04,                              /* iInterface */
+     78             /* Bulk In Endpoint */
+     79             USB_ENDPOINT_DESC_SIZE,            /* bLength */
+     80             USB_ENDPOINT_DESCRIPTOR_TYPE,      /* bDescriptorType */
+     81             MSC_EP_IN,                         /* bEndpointAddress */
+     82             USB_ENDPOINT_TYPE_BULK,            /* bmAttributes */
+     83             WBVAL(MSC_FS_MAX_PACKET),          /* wMaxPacketSize */
+     84             0,                                 /* bInterval */
+     85             /* Bulk Out Endpoint */
+     86             USB_ENDPOINT_DESC_SIZE,            /* bLength */
+     87             USB_ENDPOINT_DESCRIPTOR_TYPE,      /* bDescriptorType */
+     88             MSC_EP_OUT,                        /* bEndpointAddress */
+     89             USB_ENDPOINT_TYPE_BULK,            /* bmAttributes */
+     90             WBVAL(MSC_FS_MAX_PACKET),                     /* wMaxPacketSize */
+     91             0,                                 /* bInterval */
+     92             /* Terminator */
+     93             0                                  /* bLength */
+     94          };
+     95          
+     96          /* USB HSConfiguration Descriptor */
+     97          /*   All Descriptors (Configuration, Interface, Endpoint, Class, Vendor */
+     98          const UNS_8 USB_HSConfigDescriptor[] =
+     99          {
+    100             /* Configuration 1 */
+    101             USB_CONFIGUARTION_DESC_SIZE,       /* bLength */
+    102             USB_CONFIGURATION_DESCRIPTOR_TYPE, /* bDescriptorType */
+    103             WBVAL(                             /* wTotalLength */
+    104                1*USB_CONFIGUARTION_DESC_SIZE +
+    105                1*USB_INTERFACE_DESC_SIZE     +
+    106                2*USB_ENDPOINT_DESC_SIZE
+    107             ),
+    108             0x01,                              /* bNumInterfaces */
+    109             0x01,                              /* bConfigurationValue */
+    110             0x00,                              /* iConfiguration */
+    111             USB_CONFIG_BUS_POWERED /*|*/       /* bmAttributes */
+    112             /*USB_CONFIG_REMOTE_WAKEUP*/,
+    113             USB_CONFIG_POWER_MA(100),          /* bMaxPower */
+    114             /* Interface 0, Alternate Setting 0, MSC Class */
+    115             USB_INTERFACE_DESC_SIZE,           /* bLength */
+    116             USB_INTERFACE_DESCRIPTOR_TYPE,     /* bDescriptorType */
+    117             0x00,                              /* bInterfaceNumber */
+    118             0x00,                              /* bAlternateSetting */
+    119             0x02,                              /* bNumEndpoints */
+    120             USB_DEVICE_CLASS_STORAGE,          /* bInterfaceClass */
+    121             MSC_SUBCLASS_SCSI,                 /* bInterfaceSubClass */
+    122             MSC_PROTOCOL_BULK_ONLY,            /* bInterfaceProtocol */
+    123             0x04,                              /* iInterface */
+    124             /* Bulk In Endpoint */
+    125             USB_ENDPOINT_DESC_SIZE,            /* bLength */
+    126             USB_ENDPOINT_DESCRIPTOR_TYPE,      /* bDescriptorType */
+    127             MSC_EP_IN,                         /* bEndpointAddress */
+    128             USB_ENDPOINT_TYPE_BULK,            /* bmAttributes */
+    129             WBVAL(MSC_HS_MAX_PACKET),                     /* wMaxPacketSize */
+    130             0,                                 /* bInterval */
+    131             /* Bulk Out Endpoint */
+    132             USB_ENDPOINT_DESC_SIZE,            /* bLength */
+    133             USB_ENDPOINT_DESCRIPTOR_TYPE,      /* bDescriptorType */
+    134             MSC_EP_OUT,                        /* bEndpointAddress */
+    135             USB_ENDPOINT_TYPE_BULK,            /* bmAttributes */
+    136             WBVAL(MSC_HS_MAX_PACKET),                     /* wMaxPacketSize */
+    137             0,                                 /* bInterval */
+    138             /* Terminator */
+    139             0                                  /* bLength */
+    140          };
+    141          
+    142          /* USB String Descriptor (optional) */
+    143          const UNS_8 USB_StringDescriptor[] =
+    144          {
+    145             /* Index 0x00: LANGID Codes */
+    146             0x04,                              /* bLength */
+    147             USB_STRING_DESCRIPTOR_TYPE,        /* bDescriptorType */
+    148             WBVAL(0x0409), /* US English */    /* wLANGID */
+    149             /* Index 0x01: Manufacturer */
+    150             (18*2 + 2),                        /* bLength (13 Char + Type + lenght) */
+    151             USB_STRING_DESCRIPTOR_TYPE,        /* bDescriptorType */
+    152             'N', 0,
+    153             'X', 0,
+    154             'P', 0,
+    155             ' ', 0,
+    156             'S', 0,
+    157             'e', 0,
+    158             'm', 0,
+    159             'i', 0,
+    160             'c', 0,
+    161             'o', 0,
+    162             'n', 0,
+    163             'd', 0,
+    164             'u', 0,
+    165             'c', 0,
+    166             't', 0,
+    167             'o', 0,
+    168             'r', 0,
+    169             's', 0,
+    170             /* Index 0x02: Product */
+    171             (14*2 + 2),                        /* bLength (13 Char + Type + lenght) */
+    172             USB_STRING_DESCRIPTOR_TYPE,        /* bDescriptorType */
+    173             'L', 0,
+    174             'P', 0,
+    175             'C', 0,
+    176             '3', 0,
+    177             '1', 0,
+    178             '3', 0,
+    179             'x', 0,
+    180             ' ', 0,
+    181             'M', 0,
+    182             'e', 0,
+    183             'm', 0,
+    184             'o', 0,
+    185             'r', 0,
+    186             'y', 0,
+    187             /* Index 0x03: Serial Number */
+    188             (13*2 + 2),                        /* bLength (13 Char + Type + lenght) */
+    189             USB_STRING_DESCRIPTOR_TYPE,        /* bDescriptorType */
+    190             'A', 0,
+    191             'B', 0,
+    192             'C', 0,
+    193             'D', 0,
+    194             '1', 0,
+    195             '2', 0,
+    196             '3', 0,
+    197             '4', 0,
+    198             '5', 0,
+    199             '6', 0,
+    200             '7', 0,
+    201             '8', 0,
+    202             '9', 0,
+    203             /* Index 0x04: Interface 0, Alternate Setting 0 */
+    204             (6*2 + 2),                        /* bLength (13 Char + Type + lenght) */
+    205             USB_STRING_DESCRIPTOR_TYPE,        /* bDescriptorType */
+    206             'M', 0,
+    207             'e', 0,
+    208             'm', 0,
+    209             'o', 0,
+    210             'r', 0,
+    211             'y', 0,
+    212          };
+    213          
+    214          /* USB Device Qualifier */
+    215          const UNS_8 USB_DeviceQualifier[] =
+    216          {
+    217             USB_DEVICE_QUALI_SIZE,             	/* bLength */
+    218             USB_DEVICE_QUALIFIER_DESCRIPTOR_TYPE,	/* bDescriptorType */
+    219             WBVAL(0x0200), /* 2.00 */          /* bcdUSB */
+    220             0x00,                              /* bDeviceClass */
+    221             0x00,                              /* bDeviceSubClass */
+    222             0x00,                              /* bDeviceProtocol */
+    223             USB_MAX_PACKET0,                   /* bMaxPacketSize0 */
+    224             0x01,                              /* bNumOtherSpeedConfigurations */
+    225             0x00                               /* bReserved */
+    226          };
+    227          
+    228          /* USB Configuration Descriptor */
+    229          /*   All Descriptors (Configuration, Interface, Endpoint, Class, Vendor */
+    230          const UNS_8 USB_FSOtherSpeedConfiguration[] =
+    231          {
+    232             /* Configuration 1 */
+    233             USB_OTHER_SPEED_CONF_SIZE,				/* bLength */
+    234             USB_OTHER_SPEED_CONFIG_DESCRIPTOR_TYPE,	/* bDescriptorType */
+    235             WBVAL(                             /* wTotalLength */
+    236                1*USB_OTHER_SPEED_CONF_SIZE +
+    237                1*USB_INTERFACE_DESC_SIZE     +
+    238                2*USB_ENDPOINT_DESC_SIZE
+    239             ),
+    240             0x01,                              /* bNumInterfaces */
+    241             0x02,                              /* bConfigurationValue */
+    242             0x00,                              /* iConfiguration */
+    243             USB_CONFIG_SELF_POWERED,          /* bmAttributes */
+    244             USB_CONFIG_POWER_MA(100),          /* bMaxPower */
+    245             /* Interface 0, Alternate Setting 0, MSC Class */
+    246             USB_INTERFACE_DESC_SIZE,           /* bLength */
+    247             USB_INTERFACE_DESCRIPTOR_TYPE,     /* bDescriptorType */
+    248             0x00,                              /* bInterfaceNumber */
+    249             0x00,                              /* bAlternateSetting */
+    250             0x02,                              /* bNumEndpoints */
+    251             USB_DEVICE_CLASS_STORAGE,          /* bInterfaceClass */
+    252             MSC_SUBCLASS_SCSI,                 /* bInterfaceSubClass */
+    253             MSC_PROTOCOL_BULK_ONLY,            /* bInterfaceProtocol */
+    254             0x04,                               /* iInterface */
+    255             /* Bulk In Endpoint */
+    256             USB_ENDPOINT_DESC_SIZE,            /* bLength */
+    257             USB_ENDPOINT_DESCRIPTOR_TYPE,      /* bDescriptorType */
+    258             MSC_EP_IN,                         /* bEndpointAddress */
+    259             USB_ENDPOINT_TYPE_BULK,            /* bmAttributes */
+    260             WBVAL(0x0040),                     /* wMaxPacketSize */
+    261             0,                                 /* bInterval */
+    262             /* Bulk Out Endpoint */
+    263             USB_ENDPOINT_DESC_SIZE,            /* bLength */
+    264             USB_ENDPOINT_DESCRIPTOR_TYPE,      /* bDescriptorType */
+    265             MSC_EP_OUT,                        /* bEndpointAddress */
+    266             USB_ENDPOINT_TYPE_BULK,            /* bmAttributes */
+    267             WBVAL(0x0040),                     /* wMaxPacketSize */
+    268             0,                                 /* bInterval */
+    269             /* Terminator */
+    270             0                                  /* bLength */
+    271          };
+    272          
+    273          /* USB Configuration Descriptor */
+    274          /*   All Descriptors (Configuration, Interface, Endpoint, Class, Vendor */
+    275          const UNS_8 USB_HSOtherSpeedConfiguration[] =
+    276          {
+    277             /* Configuration 1 */
+    278             USB_OTHER_SPEED_CONF_SIZE,				/* bLength */
+    279             USB_OTHER_SPEED_CONFIG_DESCRIPTOR_TYPE,	/* bDescriptorType */
+    280             WBVAL(                             /* wTotalLength */
+    281                1*USB_OTHER_SPEED_CONF_SIZE +
+    282                1*USB_INTERFACE_DESC_SIZE     +
+    283                2*USB_ENDPOINT_DESC_SIZE
+    284             ),
+    285             0x01,                              /* bNumInterfaces */
+    286             0x02,                              /* bConfigurationValue */
+    287             0x00,                              /* iConfiguration */
+    288             USB_CONFIG_SELF_POWERED,           /* bmAttributes */
+    289             USB_CONFIG_POWER_MA(100),          /* bMaxPower */
+    290             /* Interface 0, Alternate Setting 0, MSC Class */
+    291             USB_INTERFACE_DESC_SIZE,           /* bLength */
+    292             USB_INTERFACE_DESCRIPTOR_TYPE,     /* bDescriptorType */
+    293             0x00,                              /* bInterfaceNumber */
+    294             0x00,                              /* bAlternateSetting */
+    295             0x02,                              /* bNumEndpoints */
+    296             USB_DEVICE_CLASS_STORAGE,          /* bInterfaceClass */
+    297             MSC_SUBCLASS_SCSI,                 /* bInterfaceSubClass */
+    298             MSC_PROTOCOL_BULK_ONLY,            /* bInterfaceProtocol */
+    299             0x04,                               /* iInterface */
+    300             /* Bulk In Endpoint */
+    301             USB_ENDPOINT_DESC_SIZE,            /* bLength */
+    302             USB_ENDPOINT_DESCRIPTOR_TYPE,      /* bDescriptorType */
+    303             MSC_EP_IN,                         /* bEndpointAddress */
+    304             USB_ENDPOINT_TYPE_BULK,            /* bmAttributes */
+    305             WBVAL(0x0200),                     /* wMaxPacketSize */
+    306             0,                                 /* bInterval */
+    307             /* Bulk Out Endpoint */
+    308             USB_ENDPOINT_DESC_SIZE,            /* bLength */
+    309             USB_ENDPOINT_DESCRIPTOR_TYPE,      /* bDescriptorType */
+    310             MSC_EP_OUT,                        /* bEndpointAddress */
+    311             USB_ENDPOINT_TYPE_BULK,            /* bmAttributes */
+    312             WBVAL(0x0200),                     /* wMaxPacketSize */
+    313             0,                                 /* bInterval */
+    314             /* Terminator */
+    315             0                                  /* bLength */
+    316          };
+    317          
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+      20  USB_DeviceDescriptor
+      12  USB_DeviceQualifier
+      36  USB_FSConfigDescriptor
+      36  USB_FSOtherSpeedConfiguration
+      36  USB_HSConfigDescriptor
+      36  USB_HSOtherSpeedConfiguration
+     116  USB_StringDescriptor
+
+ 
+ 292 bytes in section .rodata
+ 
+ 292 bytes of CONST memory
+
+Errors: none
+Warnings: none

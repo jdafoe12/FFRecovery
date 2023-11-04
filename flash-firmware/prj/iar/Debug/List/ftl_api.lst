@@ -1,0 +1,1031 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        02/Aug/2023  19:53:33
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\core\ftl\ftl_api.c
+#    Command line =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\core\ftl\ftl_api.c
+#        -D BOOT_LEVEL_2 -lcN
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List
+#        -o C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj
+#        --no_cse --no_unroll --no_inline --no_code_motion --no_tbaa
+#        --no_clustering --no_scheduling --debug --endian=little
+#        --cpu=ARM926EJ-S -e --fpu=None --dlib_config "C:\Program Files
+#        (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\ -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\
+#        --cpu_mode thumb -Ol --use_c++_inline
+#    List file    =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List\ftl_api.lst
+#    Object file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj\ftl_api.o
+#
+###############################################################################
+
+C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\core\ftl\ftl_api.c
+      1          /*********************************************************
+      2           * Module name: ftl_api.c
+      3           *
+      4           * Copyright 2010, 2011. All Rights Reserved, Crane Chu.
+      5           *
+      6           * This file is part of OpenNFM.
+      7           *
+      8           * OpenNFM is free software: you can redistribute it and/or 
+      9           * modify it under the terms of the GNU General Public 
+     10           * License as published by the Free Software Foundation, 
+     11           * either version 3 of the License, or (at your option) any 
+     12           * later version.
+     13           * 
+     14           * OpenNFM is distributed in the hope that it will be useful,
+     15           * but WITHOUT ANY WARRANTY; without even the implied 
+     16           * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR 
+     17           * PURPOSE. See the GNU General Public License for more 
+     18           * details.
+     19           *
+     20           * You should have received a copy of the GNU General Public 
+     21           * License along with OpenNFM. If not, see 
+     22           * <http://www.gnu.org/licenses/>.
+     23           *
+     24           * First written on 2010-01-01 by cranechu@gmail.com
+     25           *
+     26           * Module Description:
+     27           *    FTL APIs.
+     28           *
+     29           *********************************************************/
+     30          
+     31          #include <core\inc\cmn.h>
+     32          #include <core\inc\ftl.h>
+     33          #include <core\inc\ubi.h>
+     34          #include <core\inc\mtd.h>
+     35          #include <sys\sys.h>
+     36          #include "ftl_inc.h"
+     37          #include <core\inc\buf.h>
+     38          
+     39          
+     40          /* Advanced Page Mapping FTL:
+     41           * - Block Dirty Table: LOG_BLOCK 0, cache all
+     42           * - ROOT Table: LOG_BLOCK 1, cache all. point to journal blocks.
+     43           * - Page Mapping Table: LOG_BLOCK 2~N, cache x pages with LRU algo.
+     44           * - DATA Journal: commit
+     45           * - Init: read BDT, ROOT, PMT, Journal info, ...
+     46           * - Reclaim
+     47           * - Meta Data Page: in last page in PMT blocks and data blocks.
+     48           * - choose journal block on erase and write, according to die index
+     49           *
+     50           * TODO: advanced features:
+     51           * - sanitizing
+     52           * - bg erase
+     53           * - check wp/trim, ...
+     54           */
+     55             
+     56           //jsjpenn
+     57          UINT32 g_LBAnum;//逻辑地址I总数 
+     58             
+     59          
+     60          STATUS FTL_Format() {
+     61              
+     62            STATUS ret;    
+     63            ret = UBI_Format();
+     64            if (ret == STATUS_SUCCESS) {
+     65              ret = UBI_Init();
+     66            }
+     67          
+     68            if (ret == STATUS_SUCCESS) {
+     69              ret = DATA_Format();
+     70            }
+     71          
+     72            if (ret == STATUS_SUCCESS) {
+     73              ret = HDI_Format();
+     74            }
+     75          
+     76            if (ret == STATUS_SUCCESS) {
+     77              ret = PMT_Format();
+     78            }
+     79          
+     80            if (ret == STATUS_SUCCESS) {
+     81              ret = BDT_Format();
+     82            }
+     83          
+     84            if (ret == STATUS_SUCCESS) {
+     85              ret = ROOT_Format();
+     86            }
+     87          
+     88            return ret;
+     89          }
+     90          
+     91          STATUS FTL_Init() {
+     92            STATUS ret;
+     93          
+     94            ret = UBI_Init();
+     95            if (ret == STATUS_SUCCESS) {
+     96              /* scan tables on UBI, and copy to RAM */
+     97              ret = ROOT_Init();
+     98            }
+     99          
+    100            if (ret == STATUS_SUCCESS) {
+    101              ret = BDT_Init();
+    102            }
+    103          
+    104            if (ret == STATUS_SUCCESS) {
+    105              ret = PMT_Init();
+    106            }
+    107          
+    108            if (ret == STATUS_SUCCESS) {
+    109              ret = HDI_Init();
+    110            }
+    111              
+    112            //jsjpenn在状态2中更新hot 与cold日志块
+    113            if (ret == STATUS_SUCCESS && g_state==2) {
+    114              JOURNAL_ADDR* journal;
+    115              JOURNAL_ADDR* exclude_journal;
+    116              journal = root_table.hot_journal;
+    117              exclude_journal = root_table.cold_journal;
+    118              UINT32 hotblock, coldblock;
+    119              hotblock = PM_NODE_BLOCK(journal[0]);
+    120              coldblock= PM_NODE_BLOCK(exclude_journal[0]);
+    121              //uart_printf("%s: Before change: hot journal blcok=%d,cold journal blcok=%d\r\n",__func__,hotblock,coldblock);
+    122              
+    123              ret = DATA_Reclaim(TRUE);//更新hot日志块
+    124              if (ret == STATUS_SUCCESS) {
+    125                ret = DATA_Reclaim(FALSE);//更新cold日志块
+    126                if (ret == STATUS_SUCCESS) {
+    127                  ret = DATA_Commit();//更新FTL的各个表到flash上
+    128                  if (ret == STATUS_SUCCESS) {
+    129                    hotblock = PM_NODE_BLOCK(journal[0]);
+    130                    coldblock= PM_NODE_BLOCK(exclude_journal[0]);  
+    131                    //uart_printf("%s: After change: hot journal blcok=%d,cold journal blcok=%d,\r\n",__func__,hotblock,coldblock);        
+    132                  }
+    133               }
+    134              }  
+    135            }
+    136            
+    137            //jsjpenn
+    138            //只在状态1中执行即可，状态2时从新的日志块开始，且内存中的映射已清空
+    139           if (g_state==1) {
+    140             
+    141            if (ret == STATUS_SUCCESS) { 
+    142           
+    143              ret = DATA_Replay(root_table.hot_journal);
+    144            }
+    145          
+    146            if (ret == STATUS_SUCCESS) {
+    147             
+    148              ret = DATA_Replay(root_table.cold_journal);
+    149            }
+    150          
+    151            if (ret == STATUS_SUCCESS) {
+    152              /* handle reclaim PLR: start reclaim again. Some data should
+    153               * be written in the same place, so just rewrite same data in the
+    154               * same page regardless this page is written or not. */
+    155          
+    156              /* check if hot journal blocks are full */
+    157              if (DATA_IsFull(TRUE) == TRUE) {
+    158                ret = DATA_Reclaim(TRUE);
+    159                if (ret == STATUS_SUCCESS) {
+    160                  ret = DATA_Commit();
+    161                }
+    162              }
+    163          
+    164              /* check if cold journal blocks are full */
+    165              if (DATA_IsFull(FALSE) == TRUE) {
+    166                ret = DATA_Reclaim(FALSE);
+    167                if (ret == STATUS_SUCCESS) {
+    168                  ret = DATA_Commit();
+    169                }
+    170              }
+    171            }
+    172            
+    173            
+    174           }//jsjpennend
+    175           
+    176           
+    177            return ret;
+    178          }
+    179          
+    180          
+    181          int tag=0;
+    182          
+    183          STATUS FTL_Write(PGADDR addr, void* buffer) {
+    184            STATUS ret;
+    185            //uart_printf("%s: LBA=%d\r\n",__func__,addr); 
+    186             
+    187            //jsjpenn 判断是否需要改变状态g_LBAnum=240345
+    188            //if(addr==g_LBAnum-100){//240245 linux判断扇区数=240245*4=960980 
+    189            
+    190          //    if(addr>g_LBAnum){
+    191          //      tag++;
+    192          //      uart_printf("***%s***: tag=%d\r\n",__func__,tag);
+    193          //      
+    194          //      if(tag>1){//在格式化文件系统时会触发一次
+    195          //        g_ReceiveCommandNum++;
+    196          //        
+    197          //        //Lock: sudo dd if=/dev/zero of=/dev/sdb bs=512 count=1 seek=961384
+    198          //        if(addr==240346){          
+    199          //          //if(g_ReceiveCommandNum==1 && g_state==1){      
+    200          //            ret=FTL_UBI_StartLockImage();//过程1
+    201          //            if(ret == STATUS_SUCCESS) {        
+    202          //             g_state++;        
+    203          //             uart_printf("%s: State 1 and process 1 done, we have entered state 2, start to test malware\r\n",__func__);        
+    204          //             ret=STATUS_SUCCESS;//不需要重启
+    205          //             return ret;
+    206          //            }
+    207          //          //}         
+    208          //        }
+    209          //        
+    210          //       //Recover: sudo dd if=/dev/zero of=/dev/sdb bs=512 count=1 seek=961388  
+    211          //       if(addr==240347){
+    212          //         //if(g_ReceiveCommandNum>=2){
+    213          //          ret=FTL_UBI_RestoreImage();//过程2
+    214          //          if(ret == STATUS_SUCCESS) {
+    215          //           uart_printf("%s: Restore the image ok, the %d time to enter state 2,\r\n",__func__,g_ReceiveCommandNum);
+    216          //           ret=STATUS_Remount;             
+    217          //           return ret;
+    218          //          }
+    219          //        //}         
+    220          //       }
+    221          //       return ret=STATUS_SUCCESS;   
+    222          //        
+    223          //      }      
+    224          //      
+    225          //    }
+    226               
+    227            
+    228              /****************************nc test****************/
+    229              if(addr==237846){ //951384         
+    230                    //if(g_ReceiveCommandNum==1 && g_state==1){      
+    231                      ret=FTL_UBI_StartLockImage();//过程1
+    232                      if(ret == STATUS_SUCCESS) {        
+    233                       g_state = 2;        
+    234                       uart_printf("%s: State 1 and process 1 done, we have entered state 2, start to test malware\r\n",__func__);        
+    235                       ret=STATUS_SUCCESS;//不需要重启        
+    236                       return ret;
+    237                      }
+    238                      
+    239                      else {
+    240                        uart_printf("state 1 failed\n");
+    241                      }
+    242                    //}         
+    243                  }
+    244              
+    245              if(addr==237847){ //951388
+    246                   //if(g_ReceiveCommandNum>=2){
+    247                    ret=FTL_UBI_RestoreImage();//过程2
+    248                    if(ret == STATUS_SUCCESS) {
+    249                     uart_printf("%s: Restore the image ok, the %d time to enter state 2,\r\n",__func__,g_ReceiveCommandNum);
+    250                     ret=STATUS_Remount;             
+    251                     return ret;
+    252                    }
+    253                    else {
+    254                      uart_printf("state 2 failed\n");
+    255                    }
+    256                  //}         
+    257                 }
+    258              
+    259              /****************************nc test****************/
+    260              
+    261              // JD
+    262              if(addr==237848) { // 951392
+    263                if(ftl_read_state == 0) {
+    264                  ret = STATUS_SUCCESS;
+    265                  ftl_read_state = 1;
+    266                  uart_printf("%Entered read state: %d - Recovery\n", ftl_read_state);
+    267                  for(int i = 0; i < cache_size; i++) { // Flush mapping cache to storage device
+    268                    cache_remove();
+    269                  }
+    270                }
+    271                else {
+    272                  ret = STATUS_SUCCESS;
+    273                  ftl_read_state = 0;
+    274                  uart_printf("Entered read state: %d - Normal\n", ftl_read_state);
+    275                  
+    276                }
+    277                return ret;
+    278              }
+    279              
+    280              if(addr==237849) {
+    281                current_time++;
+    282                uart_printf("Current_time: %d\n", current_time);
+    283              }
+    284              
+    285              // JD end
+    286              
+    287            BOOL is_hot = HDI_IsHotPage(addr);  
+    288             
+    289            ret = DATA_Write(addr, buffer, is_hot);
+    290            
+    291            if (ret == STATUS_SUCCESS) {
+    292              if (DATA_IsFull(is_hot)) {
+    293                ret = DATA_Reclaim(is_hot);
+    294                if (ret == STATUS_SUCCESS) {
+    295                  ret = DATA_Commit(); // likely not here, though seems connected.
+    296                }
+    297              }
+    298            }
+    299            return ret;
+    300          }
+    301          
+    302          STATUS FTL_Read(PGADDR addr, void* buffer) {
+    303            LOG_BLOCK block;
+    304            PAGE_OFF page;
+    305            STATUS ret;
+    306            
+    307            //uart_printf("%s: LBA=%d\r\n",__func__,addr); 
+    308            
+    309            ret = PMT_Search(addr, &block, &page);
+    310            if(ftl_read_state == 1) {
+    311              uart_printf("READ: address: %d block: %d page: %d\n", addr, block, page);
+    312            }
+    313            if (ret == STATUS_SUCCESS) {
+    314              ret = UBI_Read(block, page, buffer, NULL);
+    315            }
+    316            return ret;
+    317          }
+    318          
+    319          STATUS FTL_Trim(PGADDR start, PGADDR end) {
+    320            PGADDR addr;
+    321            STATUS ret = STATUS_SUCCESS;
+    322          
+    323            for (addr = start; addr <= end; addr++) {
+    324              ret = FTL_Write(addr, NULL);
+    325              if (ret != STATUS_SUCCESS) {
+    326                break;
+    327              }
+    328            }
+    329          
+    330            return ret;
+    331          }
+    332          
+    333          STATUS FTL_SetWP(PGADDR laddr, BOOL enabled) {
+    334            return STATUS_FAILURE;
+    335          }
+    336          
+    337          BOOL FTL_CheckWP(PGADDR laddr) {
+    338            return FALSE;
+    339          }
+    340          
+    341          STATUS FTL_BgTasks() {
+    342            return STATUS_SUCCESS;
+    343          }
+    344          
+    345          PGADDR FTL_Capacity() {
+    346            LOG_BLOCK block;
+    347          
+    348            block = UBI_Capacity;//3991
+    349            block -= JOURNAL_BLOCK_COUNT; /* data hot journal *///1
+    350            block -= JOURNAL_BLOCK_COUNT; /* data cold journal *///1
+    351            block -= JOURNAL_BLOCK_COUNT; /* data reclaim journal *///1
+    352            block -= PMT_BLOCK_COUNT; /* pmt blocks *///40
+    353            block -= 2; /* bdt blocks */
+    354            block -= 2; /* root blocks */
+    355            block -= 2; /* hdi reserved */
+    356            
+    357            //jsjpenn
+    358            block -= 8;//PMTRESORE_START_BLOCK
+    359            block -= 1;//UBI_reserved_START_BLOCK
+    360            block -=1;//FTL_reserved_START_BLOCK
+    361            
+    362            block -= block / 100 * OVER_PROVISION_RATE; /* over provision */
+    363              
+    364            //jsjpenn
+    365             g_LBAnum=block * (PAGE_PER_PHY_BLOCK - 1);//逻辑地址I总数=3815*63=240345 
+    366             
+    367            /* last page in every block is reserved for meta data collection */
+    368            return g_LBAnum;//返回逻辑地址I总数
+    369          }
+    370          
+    371          STATUS FTL_Flush() {
+    372            STATUS ret= STATUS_SUCCESS;
+    373              
+    374           
+    375            if (ret == STATUS_SUCCESS) {
+    376              ret = UBI_Flush();
+    377            }
+    378          
+    379            if (ret == STATUS_SUCCESS) {
+    380              
+    381            }
+    382          
+    383            return ret;
+    384          }
+    385          
+    386          
+    387          //jsjpenn
+    388          STATUS FTL_UBI_StartLockImage(){
+    389          
+    390            STATUS ret= STATUS_SUCCESS;  
+    391            //uart_printf("%s: Start to lock image\r\n",__func__);   
+    392            
+    393             //wpy 
+    394            UINT32 i;
+    395            LOG_BLOCK block =PMTRESORE_START_BLOCK;//46
+    396            
+    397           //wpy
+    398            for(i=0;i<PMTRESORE_BLOCK_COUNT+FTL_reserved_BLOCK_COUNT;i++){ // MAPII stored in 55-71. Should these be erased?
+    399              if (ret == STATUS_SUCCESS) {
+    400                ret = UBI_Erase(block, block);//擦除存储的前一个状态的各种表 46-54，UBI层不变
+    401              }
+    402              block++;
+    403            }
+    404            
+    405            //1.更新hot、cold日志块，保证image与malware不共用块
+    406            JOURNAL_ADDR* journal;
+    407            JOURNAL_ADDR* exclude_journal;
+    408            journal = root_table.hot_journal;
+    409            exclude_journal = root_table.cold_journal;
+    410           
+    411            //将日志块中的MAPI更新到flash上的PMT块中，保证SRAM中的映射更新到了flash上
+    412            if (ret == STATUS_SUCCESS) {
+    413              ret = DATA_Replay(journal);
+    414            }
+    415            if (ret == STATUS_SUCCESS) {
+    416              ret = DATA_Replay(exclude_journal);
+    417            }  
+    418            
+    419           
+    420            
+    421            ret = DATA_Reclaim(TRUE);//更新hot日志块
+    422            if (ret == STATUS_SUCCESS) {
+    423              ret = DATA_Reclaim(FALSE);//更新cold日志块
+    424              if (ret == STATUS_SUCCESS) {
+    425                ret = DATA_Commit();//此韩式真正实现将FTL的各个表更新到flash上
+    426                if (ret == STATUS_SUCCESS) {
+    427                       
+    428                }
+    429              }
+    430            }  
+    431             
+    432              
+    433            //2.保存UBI各种表结构
+    434            //由于改变了UBI_Erase()中的逻辑，MAPII不会改变（除非遇到坏块和使用均衡）
+    435            //因此不用保存UBI的各个表
+    436            //ret=UBI_table_store();
+    437            //if(ret == STATUS_SUCCESS) {    
+    438            //uart_printf(": Write all the UBI tables ok");
+    439           // }
+    440            
+    441            
+    442            //3.保存FTL各种表结构
+    443            ret=FTL_table_store();  
+    444            if(ret == STATUS_SUCCESS) {    
+    445              //uart_printf("%s: Write all the FTL tables ok\r\n",__func__);     
+    446            }
+    447            
+    448            return ret;
+    449          }
+    450          
+    451          //2 保存UBI各种表结构
+    452          STATUS UBI_table_store(){
+    453          
+    454            STATUS ret;
+    455            
+    456            //1.保存AREA table，即MAP II
+    457              ret=UBI_MAPII_store();
+    458          
+    459           //2.保存INDEX table
+    460             if(ret == STATUS_SUCCESS) {
+    461              ret=UBI_INDEX_table_store();    
+    462            }    
+    463              
+    464           //3.保存ANCHOR table 
+    465             if(ret == STATUS_SUCCESS) {
+    466               ret=UBI_ANCHOR_table_store(); 
+    467             }
+    468             
+    469            return ret;
+    470          }
+    471          
+    472          
+    473          
+    474          //3 保存FTL各种表结构
+    475          STATUS FTL_table_store(){
+    476             
+    477            STATUS ret;
+    478            
+    479            //1.保存HDI hash table
+    480            ret=FTL_HDI_hash_table_store();
+    481            
+    482           //2.保存MAPI
+    483           if(ret == STATUS_SUCCESS) {
+    484            FTL_MAPI_store();
+    485           }  
+    486            
+    487           //3.保存BDT table
+    488           if(ret == STATUS_SUCCESS) {
+    489            FTL_BDT_table_store();
+    490           }
+    491            
+    492           //4.保存ROOT table
+    493           if(ret == STATUS_SUCCESS) {
+    494            FTL_ROOT_table_store();
+    495           } 
+    496             
+    497            return ret;  
+    498          }
+    499          
+    500          
+    501          //3.2保存MAPI
+    502          STATUS FTL_MAPI_store(){  
+    503            STATUS ret = STATUS_SUCCESS;
+    504            UINT32 iClusterNum;//总簇数
+    505            UINT32 i,j,k;  
+    506            
+    507            LOG_BLOCK block_to_write;
+    508            PAGE_OFF page_to_write;
+    509            
+    510            LOG_BLOCK block;
+    511            PAGE_OFF page;
+    512            
+    513            PM_NODE_ADDR iPM_NODE[PM_PER_NODE];//512
+    514            PM_NODE_ADDR* cache_addr = NULL;
+    515            
+    516            SPARE spare; 
+    517            
+    518            LOG_BLOCK LEBblock;
+    519            LOG_BLOCK LEBtemp;
+    520            
+    521            LOG_BLOCK ValidLEBTable[4096];
+    522            UINT32  ValidLEBNum=0;
+    523            
+    524            UINT32 judge=1;
+    525            
+    526                
+    527            //MAPI占8块，存到逻辑II的8个LEB块中   
+    528            iClusterNum=((g_LBAnum + PM_PER_NODE - 1) /  PM_PER_NODE);//总簇数    470
+    529            cache_addr = &(iPM_NODE[0]);
+    530            
+    531            for(i=0;i<iClusterNum;i++){ // Loops 470 times
+    532                  
+    533                block_to_write=(i/PAGE_PER_PHY_BLOCK)+PMTRESORE_START_BLOCK;//从LEB 46块开始  46-53
+    534                page_to_write=i%PAGE_PER_PHY_BLOCK;
+    535               // uart_printf("block to write in MAPI store: %d page to write in MAPI Store: %d\n", block_to_write, page_to_write);
+    536                
+    537                block = PM_NODE_BLOCK(root_table.page_mapping_nodes[i]);
+    538                //uart_printf("associated pm node block: %d\n", block);
+    539                page = PM_NODE_PAGE(root_table.page_mapping_nodes[i]);
+    540                //uart_printf("associated pm node page: %d\n", page);
+    541                ret = UBI_Read(block, page, cache_addr, NULL);
+    542                
+    543                if(ret == STATUS_SUCCESS) {
+    544                  spare[0]=i; //簇号     
+    545                  //uart_printf("spare[0]: %d\n", spare[0]);
+    546                  ret = UBI_Write(block_to_write, page_to_write, cache_addr, spare, FALSE);  
+    547          
+    548                }
+    549                
+    550            }  
+    551            
+    552            
+    553             return ret;  
+    554          }
+    555          
+    556          
+    557          //恢复image
+    558          STATUS FTL_UBI_RestoreImage(){
+    559            STATUS ret= STATUS_SUCCESS;
+    560            
+    561            /*
+    562            //1.恢复UBI各种表结构
+    563            ret=UBI_table_restore();   
+    564            if(ret == STATUS_SUCCESS){    
+    565              uart_printf("%s: Rewrite all the UBI tables ok\r\n",__func__);
+    566            }*/
+    567            
+    568            //2.恢复FTL各种表结构
+    569            ret=FTL_table_restore();  
+    570            if(ret == STATUS_SUCCESS){    
+    571             // uart_printf("%s: Rewrite all the FTL tables ok\r\n",__func__);     
+    572            }
+    573            
+    574            /*
+    575            //3.真正更新UBI各种表结构
+    576            ret=Truly_UBI_table_restore();  
+    577            if(ret == STATUS_SUCCESS){    
+    578              uart_printf("%s: Truly restore all the UBI tables ok\r\n",__func__);     
+    579            }*/
+    580            
+    581            /*
+    582            //4.真正更新FTL各种表结构-无实际作用
+    583             ret=Truly_FTL_table_restore();  
+    584            if(ret == STATUS_SUCCESS){    
+    585              uart_printf("%s: Truly restore all the FTL tables ok\r\n",__func__);     
+    586            }*/
+    587            
+    588            
+    589           return ret;  
+    590          }
+    591          
+    592          
+    593          STATUS UBI_table_restore(){
+    594            
+    595              STATUS ret;  
+    596                  
+    597              
+    598            //1.恢复AREA table，即MAP II
+    599             ret=UBI_MAPII_restore();
+    600              
+    601              
+    602            //2.恢复INDEX table    
+    603            if(ret == STATUS_SUCCESS){
+    604             ret=UBI_INDEX_table_restore();    
+    605            }
+    606            
+    607             //3.恢复ANCHOR table 
+    608            if(ret == STATUS_SUCCESS){    
+    609              ret=UBI_ANCHOR_table_restore(); 
+    610            }
+    611          
+    612          
+    613            return ret;  
+    614          }
+    615          
+    616          STATUS FTL_table_restore(){
+    617            
+    618              STATUS ret;
+    619          
+    620              //1.恢复HDI hash table
+    621              ret=FTL_HDI_hash_table_restore(); 
+    622             
+    623              if(ret == STATUS_SUCCESS) {
+    624               //1.真正恢复HDI hash table-更新了新的root table
+    625               ret=Truly_FTL_HDI_hash_table_restore();  
+    626              }
+    627          
+    628             //2.恢复MAPI—-更新了新的root table，更新了PMT部分的BDT
+    629             if(ret == STATUS_SUCCESS) {
+    630               FTL_MAPI_restore();
+    631             }
+    632             
+    633             /*
+    634             //2.真正恢复MAPI—没有操作
+    635             if(ret == STATUS_SUCCESS) {
+    636               ret=Truly_FTL_MAPI_restore();
+    637             }*/
+    638           
+    639           
+    640            
+    641              //3.恢复BDT table
+    642             if(ret == STATUS_SUCCESS) {
+    643               FTL_BDT_table_restore();
+    644             }
+    645              //3.真正恢复BDT table--更新了新的root table
+    646             if(ret == STATUS_SUCCESS) {
+    647              ret=Truly_FTL_BDT_table_restore();
+    648             } 
+    649             
+    650          
+    651             //4.恢复ROOT table 
+    652              if(ret == STATUS_SUCCESS) {  
+    653                ret=FTL_ROOT_table_restore();
+    654             }
+    655          
+    656              /*
+    657              //4.真正恢复ROOT table—没有操作 
+    658              if(ret == STATUS_SUCCESS) {  
+    659                ret=Truly_FTL_ROOT_table_restore();
+    660             } */
+    661          
+    662           return ret;
+    663          }
+    664          
+    665          
+    666          
+    667          STATUS Truly_UBI_table_restore(){
+    668            
+    669            STATUS ret; 
+    670            
+    671            
+    672            //0.维护恢复前（LEB中的除data block区）的其他部分对应的PEB 
+    673            UINT8 i;  
+    674            PHY_BLOCK peb_before[DATA_START_BLOCK]; //56 
+    675            PHY_BLOCK peb_after[DATA_START_BLOCK]; //56 
+    676            for(i=0;i<DATA_START_BLOCK;i++){
+    677              peb_before[i]=AREA_GetBlock(i);//LEB对应PEB
+    678            }
+    679            
+    680            
+    681            //1.恢复AREA table，即MAP II
+    682             ret=Truly_UBI_MAPII_restore();
+    683            
+    684              
+    685            //2.恢复INDEX table    
+    686            if(ret == STATUS_SUCCESS){
+    687             ret=Truly_UBI_INDEX_table_restore();    
+    688            }
+    689            
+    690             //3.恢复ANCHOR table 
+    691            if(ret == STATUS_SUCCESS){    
+    692              ret=Truly_UBI_ANCHOR_table_restore(); 
+    693            }
+    694            
+    695            //判断0-55的LEB所对应的PEB不变
+    696            for(i=0;i<DATA_START_BLOCK;i++){
+    697              peb_after[i]=AREA_GetBlock(i);//LEB对应PEB
+    698              if(peb_after[i]==peb_before[i]){
+    699                //uart_printf("%s: The PEB of LEB %d not change\r\n",__func__,i);
+    700              }
+    701            }
+    702            
+    703            
+    704            return ret;  
+    705          }
+    706          
+    707          
+    708          STATUS Truly_FTL_table_restore(){
+    709            STATUS ret= STATUS_SUCCESS;  
+    710           
+    711            return ret; 
+    712          }
+    713          
+    714          //恢复MAP I
+    715          #define PMT_CURRENT_BLOCK  (PM_NODE_BLOCK(root_table.pmt_current_block))
+    716          #define PMT_CURRENT_PAGE   (PM_NODE_PAGE(root_table.pmt_current_block))
+    717          #define PMT_RECLAIM_BLOCK  (PM_NODE_BLOCK(root_table.pmt_reclaim_block))
+    718          #define PMT_RECLAIM_PAGE   (PM_NODE_PAGE(root_table.pmt_reclaim_block))
+    719          
+    720          extern STATUS pmt_reclaim_blocks();
+    721          
+    722          STATUS FTL_MAPI_restore(){  
+    723            STATUS ret = STATUS_SUCCESS;
+    724            UINT32 iClusterNum;//总簇数
+    725            
+    726            PM_NODE_ADDR iPM_NODE[PM_PER_NODE];//512
+    727            PM_NODE_ADDR* cache_addr = NULL; 
+    728            
+    729            LOG_BLOCK block_stored;
+    730            PAGE_OFF page_stored;  
+    731            SPARE spare; 
+    732            
+    733            PMT_CLUSTER meta_data[PAGE_PER_PHY_BLOCK];//保存1个PMT块中写入的簇号
+    734            
+    735            UINT32 i,j; 
+    736            
+    737            PMT_CLUSTER pm_cluster;  
+    738            
+    739            //将PMT区中各LEB的BDT全部设为63,全脏，以便回收PMT中的块
+    740            for (i = PMT_START_BLOCK; i < PMT_START_BLOCK + PMT_BLOCK_COUNT; i++) {
+    741              block_dirty_table[i] = MAX_DIRTY_PAGES;//63 
+    742            }  
+    743            pmt_reclaim_blocks();//对PMT块区中的无效的映射进行回收，更新pmt的current块，保证从新的PMT块恢复MAPI
+    744            
+    745            
+    746            //MAPI占8块，存到逻辑II的8个LEB块中   
+    747            iClusterNum=((g_LBAnum + PM_PER_NODE - 1) / PM_PER_NODE);//总簇数471   
+    748            cache_addr = &(iPM_NODE[0]);
+    749            PMT_Init();//将内存中的映射清空
+    750            
+    751            for(i=0;i<iClusterNum;i=i+PAGE_PER_PHY_BLOCK-1){      
+    752                
+    753              for(j=0;j<PAGE_PER_PHY_BLOCK-1;j++){//j<63        
+    754                pm_cluster=i+j; 
+    755                //已保存的MAPI的位置
+    756                block_stored=(pm_cluster/PAGE_PER_PHY_BLOCK)+PMTRESORE_START_BLOCK;//从LEB46块开始
+    757                page_stored=pm_cluster % PAGE_PER_PHY_BLOCK;
+    758                
+    759                ret = UBI_Read(block_stored, page_stored, cache_addr, spare);
+    760                
+    761                if (ret == STATUS_SUCCESS) {     
+    762                 
+    763                  ret = UBI_Write(PMT_CURRENT_BLOCK, PMT_CURRENT_PAGE,cache_addr, spare, FALSE);
+    764                  if (ret == STATUS_SUCCESS) {
+    765                    meta_data[PMT_CURRENT_PAGE] = pm_cluster;
+    766                   
+    767                  }                 
+    768                  PM_NODE_SET_BLOCKPAGE(root_table.page_mapping_nodes[pm_cluster],PMT_CURRENT_BLOCK, PMT_CURRENT_PAGE);
+    769                  PM_NODE_SET_BLOCKPAGE(root_table.pmt_current_block, PMT_CURRENT_BLOCK, PMT_CURRENT_PAGE+1);
+    770                }        
+    771              }
+    772              //每写63页MAP I后，在PMT的最后一块中写入该块中已写入对应的簇号
+    773              if (ret == STATUS_SUCCESS) {
+    774                ret = UBI_Write(PMT_CURRENT_BLOCK, PMT_CURRENT_PAGE, meta_data, NULL, FALSE);
+    775                if (ret == STATUS_SUCCESS) {              
+    776                  ret = pmt_reclaim_blocks();//更新pmt的current块，从新的PMT块继续恢复MAPI
+    777                }       
+    778              }     
+    779            }
+    780            
+    781            //设置root_table.pmt_reclaim_block
+    782            if (ret == STATUS_SUCCESS) {
+    783               ret = UBI_Erase(PMT_CURRENT_BLOCK+1, PMT_CURRENT_BLOCK+1);
+    784             }
+    785            if (ret == STATUS_SUCCESS) {
+    786               PM_NODE_SET_BLOCKPAGE(root_table.pmt_reclaim_block, PMT_CURRENT_BLOCK+1, 0);
+    787               block_dirty_table[PMT_CURRENT_BLOCK+1] = 0;
+    788            }
+    789            
+    790            //todo：是否需要在最后1个PMT块（未用完）的最后1页写入已写入的簇号？  
+    791            
+    792            return ret; 
+    793          }
+    794          
+    795          
+    796          STATUS Truly_FTL_MAPI_restore(){
+    797           STATUS ret = STATUS_SUCCESS;
+    798           return ret; 
+    799          }
+
+   Maximum stack usage in bytes:
+
+   .cstack Function
+   ------- --------
+       0   FTL_BgTasks
+       8   FTL_Capacity
+         8 __aeabi_uidiv
+       0   FTL_CheckWP
+       8   FTL_Flush
+         8   -> UBI_Flush
+       8   FTL_Format
+         8   -> BDT_Format
+         8   -> DATA_Format
+         8   -> HDI_Format
+         8   -> PMT_Format
+         8   -> ROOT_Format
+         8   -> UBI_Format
+         8   -> UBI_Init
+      16   FTL_Init
+        16   -> BDT_Init
+        16   -> DATA_Commit
+        16   -> DATA_IsFull
+        16   -> DATA_Reclaim
+        16   -> DATA_Replay
+        16   -> HDI_Init
+        16   -> PMT_Init
+        16   -> ROOT_Init
+        16   -> UBI_Init
+    2344   FTL_MAPI_restore
+      2344   -> PMT_Init
+      2344   -> UBI_Erase
+      2344   -> UBI_Read
+      2344   -> UBI_Write
+      2344   -> pmt_reclaim_blocks
+      2344 __aeabi_uidivmod
+    2088   FTL_MAPI_store
+      2088   -> UBI_Read
+      2088   -> UBI_Write
+      2088 __aeabi_uidivmod
+      24   FTL_Read
+        24   -> PMT_Search
+        24   -> UBI_Read
+        24   -> uart_printf
+       0   FTL_SetWP
+      16   FTL_Trim
+        16   -> FTL_Write
+       8   FTL_UBI_RestoreImage
+         8   -> FTL_table_restore
+      16   FTL_UBI_StartLockImage
+        16   -> DATA_Commit
+        16   -> DATA_Reclaim
+        16   -> DATA_Replay
+        16   -> FTL_table_store
+        16   -> UBI_Erase
+      24   FTL_Write
+        24   -> DATA_Commit
+        24   -> DATA_IsFull
+        24   -> DATA_Reclaim
+        24   -> DATA_Write
+        24   -> FTL_UBI_RestoreImage
+        24   -> FTL_UBI_StartLockImage
+        24   -> HDI_IsHotPage
+        24   -> cache_remove
+        24   -> uart_printf
+       8   FTL_table_restore
+         8   -> FTL_BDT_table_restore
+         8   -> FTL_HDI_hash_table_restore
+         8   -> FTL_MAPI_restore
+         8   -> FTL_ROOT_table_restore
+         8   -> Truly_FTL_BDT_table_restore
+         8   -> Truly_FTL_HDI_hash_table_restore
+       8   FTL_table_store
+         8   -> FTL_BDT_table_store
+         8   -> FTL_HDI_hash_table_store
+         8   -> FTL_MAPI_store
+         8   -> FTL_ROOT_table_store
+       0   Truly_FTL_MAPI_restore
+       0   Truly_FTL_table_restore
+     464   Truly_UBI_table_restore
+       464   -> AREA_GetBlock
+       464   -> Truly_UBI_ANCHOR_table_restore
+       464   -> Truly_UBI_INDEX_table_restore
+       464   -> Truly_UBI_MAPII_restore
+       8   UBI_table_restore
+         8   -> UBI_ANCHOR_table_restore
+         8   -> UBI_INDEX_table_restore
+         8   -> UBI_MAPII_restore
+       8   UBI_table_store
+         8   -> UBI_ANCHOR_table_store
+         8   -> UBI_INDEX_table_store
+         8   -> UBI_MAPII_store
+      40   printint
+        40   -> UartWrite
+        40 __aeabi_uidiv
+        40 __aeabi_uidivmod
+      56   printuint
+        56   -> UartWrite
+        56 __aeabi_uidiv
+        56 __aeabi_uidivmod
+      40   uart_printf
+        40   -> UartWrite
+        40   -> printint
+        40   -> printuint
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+       4  ??DataTable3
+       4  ??DataTable3_1
+       4  ??DataTable5
+       4  ??DataTable6
+       4  ??DataTable6_1
+       4  ??DataTable6_2
+       4  ??DataTable7
+       4  ??DataTable7_1
+       4  ??DataTable7_2
+       4  ??DataTable7_3
+       4  ??DataTable7_4
+       4  ??DataTable7_5
+       4  ??DataTable7_6
+       4  ??DataTable7_7
+       4  ??DataTable8
+       4  ??DataTable8_1
+       4  ??DataTable8_10
+       4  ??DataTable8_11
+       4  ??DataTable8_12
+       4  ??DataTable8_2
+       4  ??DataTable8_3
+       4  ??DataTable8_4
+       4  ??DataTable8_5
+       4  ??DataTable8_6
+       4  ??DataTable8_7
+       4  ??DataTable8_8
+       4  ??DataTable8_9
+       4  ??DataTable9
+       4  ??DataTable9_1
+       4  ??DataTable9_2
+       4  ??DataTable9_3
+       4  ??DataTable9_4
+       4  ??DataTable9_5
+       4  ??DataTable9_6
+       4  ??DataTable9_7
+       8  ?_0
+      84  ?_1
+      16  ?_2
+      60  ?_3
+      16  ?_4
+      36  ?_5
+      36  ?_6
+      20  ?_7
+      40  ?_8
+       4  FTL_BgTasks
+      54  FTL_Capacity
+       4  FTL_CheckWP
+      22  FTL_Flush
+      84  FTL_Format
+     266  FTL_Init
+     362  FTL_MAPI_restore
+     126  FTL_MAPI_store
+      68  FTL_Read
+       4  FTL_SetWP
+      38  FTL_Trim
+      14  FTL_UBI_RestoreImage
+     108  FTL_UBI_StartLockImage
+     274  FTL_Write
+      82  FTL_table_restore
+      52  FTL_table_store
+       8  Truly_FTL_MAPI_restore
+       8  Truly_FTL_table_restore
+     120  Truly_UBI_table_restore
+      36  UBI_table_restore
+      36  UBI_table_store
+      20  digits
+      20  digits
+       4  g_LBAnum
+     104  printint
+      64  printuint
+       4  tag
+     210  uart_printf
+      12  -- Other
+
+ 
+     8 bytes in section .bss
+    40 bytes in section .data
+   328 bytes in section .rodata
+ 2 288 bytes in section .text
+ 
+ 2 288 bytes of CODE  memory
+   328 bytes of CONST memory
+    48 bytes of DATA  memory
+
+Errors: none
+Warnings: 9

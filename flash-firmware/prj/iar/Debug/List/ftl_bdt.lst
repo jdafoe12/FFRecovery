@@ -1,0 +1,292 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        02/Aug/2023  19:53:33
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\core\ftl\ftl_bdt.c
+#    Command line =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\core\ftl\ftl_bdt.c
+#        -D BOOT_LEVEL_2 -lcN
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List
+#        -o C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj
+#        --no_cse --no_unroll --no_inline --no_code_motion --no_tbaa
+#        --no_clustering --no_scheduling --debug --endian=little
+#        --cpu=ARM926EJ-S -e --fpu=None --dlib_config "C:\Program Files
+#        (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\ -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\
+#        --cpu_mode thumb -Ol --use_c++_inline
+#    List file    =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List\ftl_bdt.lst
+#    Object file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj\ftl_bdt.o
+#
+###############################################################################
+
+C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\core\ftl\ftl_bdt.c
+      1          /*********************************************************
+      2           * Module name: ftl_bdt.c
+      3           *
+      4           * Copyright 2010, 2011. All Rights Reserved, Crane Chu.
+      5           *
+      6           * This file is part of OpenNFM.
+      7           *
+      8           * OpenNFM is free software: you can redistribute it and/or 
+      9           * modify it under the terms of the GNU General Public 
+     10           * License as published by the Free Software Foundation, 
+     11           * either version 3 of the License, or (at your option) any 
+     12           * later version.
+     13           * 
+     14           * OpenNFM is distributed in the hope that it will be useful,
+     15           * but WITHOUT ANY WARRANTY; without even the implied 
+     16           * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR 
+     17           * PURPOSE. See the GNU General Public License for more 
+     18           * details.
+     19           *
+     20           * You should have received a copy of the GNU General Public 
+     21           * License along with OpenNFM. If not, see 
+     22           * <http://www.gnu.org/licenses/>.
+     23           *
+     24           * First written on 2010-01-01 by cranechu@gmail.com
+     25           *
+     26           * Module Description:
+     27           *    FTL Block Dirty Table.
+     28           *
+     29           *********************************************************/
+     30          
+     31          #include <core\inc\cmn.h>
+     32          #include <core\inc\ubi.h>
+     33          #include <sys\sys.h>
+     34          #include "ftl_inc.h"
+     35          
+     36          static LOG_BLOCK bdt_current_block;
+     37          static PAGE_OFF bdt_current_page;
+     38          #define BDT_PAGE_COUNT          ((CFG_LOG_BLOCK_COUNT+MPP_SIZE-1)/MPP_SIZE)//2
+     39          DIRTY_PAGE_COUNT block_dirty_table[BDT_PAGE_COUNT * MPP_SIZE];//4096
+     40          #define BDT_PAGE_ADDR(i)        (&(block_dirty_table[(i)*MPP_SIZE]))
+     41          
+     42          STATUS BDT_Format() {
+     43            STATUS ret;
+     44          
+     45            bdt_current_block = BDT_BLOCK0;
+     46            bdt_current_page = 0;
+     47          
+     48            ret = UBI_Erase(bdt_current_block, bdt_current_block);
+     49            if (ret == STATUS_SUCCESS) {
+     50              /* write to UBI */
+     51              ret = BDT_Commit();
+     52            }
+     53          
+     54            return ret;
+     55          }
+     56          
+     57          STATUS BDT_Init() {
+     58            UINT32 i;
+     59            STATUS ret = STATUS_SUCCESS;
+     60          
+     61            bdt_current_block = PM_NODE_BLOCK(root_table.bdt_current_journal);
+     62            bdt_current_page = PM_NODE_PAGE(root_table.bdt_current_journal);
+     63          
+     64            /* read out the valid page of table */
+     65            for (i = 0; i < BDT_PAGE_COUNT; i++) {
+     66              ret = UBI_Read(bdt_current_block, bdt_current_page + i, BDT_PAGE_ADDR(i),NULL);
+     67              ASSERT(ret == STATUS_SUCCESS);
+     68            }
+     69          
+     70            /* scan the first erased page in the block */
+     71            for (i = bdt_current_page + BDT_PAGE_COUNT; i < PAGE_PER_PHY_BLOCK; i +=BDT_PAGE_COUNT) {
+     72              ret = UBI_Read(bdt_current_block, i, NULL, NULL);
+     73              if (ret != STATUS_SUCCESS) {
+     74                /* this page is not programmed */
+     75                bdt_current_page = i;
+     76                ret = STATUS_SUCCESS;
+     77                break;
+     78              }
+     79            }
+     80          
+     81            if (i == PAGE_PER_PHY_BLOCK) {
+     82              ASSERT(ret == STATUS_SUCCESS);
+     83          
+     84              /* current block is full */
+     85              bdt_current_page = PAGE_PER_PHY_BLOCK;
+     86            }
+     87          
+     88            if (ret == STATUS_SUCCESS) {
+     89              /* skip one page for possible PLR issue */
+     90              
+     91              
+     92             
+     93              
+     94              
+     95              
+     96              (void) BDT_Commit();
+     97            }
+     98          
+     99            return ret;
+    100          }
+    101          
+    102          STATUS BDT_Commit() {
+    103            STATUS ret = STATUS_SUCCESS;
+    104            LOG_BLOCK next_block = INVALID_BLOCK;
+    105            UINT32 i;
+    106          
+    107            if (bdt_current_page == PAGE_PER_PHY_BLOCK) {
+    108              /* write data in another block */
+    109              next_block = bdt_current_block ^ 1;//BDT区的两个块交替使用
+    110          
+    111              /* erase the block before write bdt */
+    112              ret = UBI_Erase(next_block, next_block);
+    113              if (ret == STATUS_SUCCESS) {
+    114                bdt_current_page = 0;
+    115                bdt_current_block = next_block;
+    116              }
+    117            }
+    118          
+    119            /* write BDT in ram to UBI */
+    120            for (i = 0; i < BDT_PAGE_COUNT; i++) {
+    121              if (ret == STATUS_SUCCESS) {
+    122                ret = UBI_Write(bdt_current_block, bdt_current_page + i, BDT_PAGE_ADDR(i),NULL,FALSE);
+    123              }
+    124            }
+    125          
+    126            if (ret == STATUS_SUCCESS) {
+    127              PM_NODE_SET_BLOCKPAGE(root_table.bdt_current_journal, bdt_current_block,bdt_current_page);
+    128              bdt_current_page += BDT_PAGE_COUNT;
+    129            }
+    130          
+    131            return ret;
+    132          }
+    133          
+    134          
+    135          //jsjpenn
+    136          STATUS FTL_BDT_table_store(){
+    137            
+    138            STATUS ret;
+    139            LOG_BLOCK block_to_write=FTL_reserved_START_BLOCK;//54
+    140            PAGE_OFF page_to_write=1;//将2页BDT表，写在第1和第2页
+    141            UINT8 i;  
+    142            
+    143            for (i = 0; i < BDT_PAGE_COUNT; i++) {//2  
+    144              ret=UBI_Write(block_to_write, page_to_write+i, BDT_PAGE_ADDR(i), NULL, FALSE);
+    145            }
+    146            
+    147            return ret;
+    148          }
+    149          
+    150          STATUS FTL_BDT_table_restore(){
+    151            
+    152            STATUS ret;
+    153            LOG_BLOCK block_to_write=FTL_reserved_START_BLOCK;//54
+    154            PAGE_OFF page_to_write=1;//将2页BDT表，写在第1和第2页
+    155            UINT8 i;
+    156            
+    157            
+    158            DIRTY_PAGE_COUNT tem_block_dirty_table[BDT_PAGE_COUNT * MPP_SIZE];//4096
+    159            #define tem_BDT_PAGE_ADDR(i)        (&(tem_block_dirty_table[(i)*MPP_SIZE]))
+    160            
+    161            
+    162            LOG_BLOCK next_block = INVALID_BLOCK;  
+    163             
+    164            for (i = 0; i < BDT_PAGE_COUNT; i++) {  
+    165              ret=UBI_Read(block_to_write, page_to_write+i, tem_BDT_PAGE_ADDR(i), NULL);   
+    166            }
+    167            
+    168            //因为在恢复MAPI时修改了BDT,所以要更新保存的BDT中的PMT部分
+    169            for(i = PMT_START_BLOCK; i < PMT_START_BLOCK + PMT_BLOCK_COUNT; i++) {
+    170              tem_block_dirty_table[i]=block_dirty_table[i];  
+    171            }
+    172            
+    173            if(ret == STATUS_SUCCESS) {
+    174              if (bdt_current_page == PAGE_PER_PHY_BLOCK) {    
+    175              next_block = bdt_current_block ^ 1;//BDT区的两个块交替使用    
+    176              ret = UBI_Erase(next_block, next_block);//实际是直接物理擦除，不修改MAPII
+    177              if (ret == STATUS_SUCCESS) {
+    178                bdt_current_page = 0;
+    179                bdt_current_block = next_block;
+    180              }
+    181            } 
+    182            for (i = 0; i < BDT_PAGE_COUNT; i++) {
+    183              if (ret == STATUS_SUCCESS) {
+    184                ret = UBI_Write(bdt_current_block, bdt_current_page + i, tem_BDT_PAGE_ADDR(i),NULL,FALSE);
+    185              }
+    186             
+    187            }
+    188            
+    189           }    
+    190            return ret;
+    191          }
+    192          
+    193          STATUS Truly_FTL_BDT_table_restore(){
+    194            
+    195            STATUS ret= STATUS_SUCCESS;  
+    196             
+    197            if (ret == STATUS_SUCCESS) {
+    198              PM_NODE_SET_BLOCKPAGE(root_table.bdt_current_journal, bdt_current_block,bdt_current_page);
+    199              bdt_current_page += BDT_PAGE_COUNT;
+    200             
+    201            }  
+    202            return ret;
+    203          }
+    204          
+
+   Maximum stack usage in bytes:
+
+   .cstack Function
+   ------- --------
+      16   BDT_Commit
+        16   -> UBI_Erase
+        16   -> UBI_Write
+       8   BDT_Format
+         8   -> BDT_Commit
+         8   -> UBI_Erase
+      16   BDT_Init
+        16   -> BDT_Commit
+        16   -> UBI_Read
+    4120   FTL_BDT_table_restore
+      4120   -> UBI_Erase
+      4120   -> UBI_Read
+      4120   -> UBI_Write
+      24   FTL_BDT_table_store
+        24   -> UBI_Write
+       4   Truly_FTL_BDT_table_restore
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+       4  ??DataTable5
+       4  ??DataTable5_1
+       4  ??DataTable5_2
+       4  ??DataTable5_3
+       4  ??DataTable5_4
+       4  ??DataTable5_5
+     144  BDT_Commit
+      44  BDT_Format
+     156  BDT_Init
+     206  FTL_BDT_table_restore
+      60  FTL_BDT_table_store
+      48  Truly_FTL_BDT_table_restore
+       4  bdt_current_block
+       4  bdt_current_page
+    4096  block_dirty_table
+
+ 
+ 4 104 bytes in section .bss
+   682 bytes in section .text
+ 
+   682 bytes of CODE memory
+ 4 104 bytes of DATA memory
+
+Errors: none
+Warnings: none

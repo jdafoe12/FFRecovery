@@ -1,0 +1,716 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        02/Aug/2023  19:53:32
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\sys\lpc313x\bsp\arm926ej_cp15_drv.c
+#    Command line =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\sys\lpc313x\bsp\arm926ej_cp15_drv.c
+#        -D BOOT_LEVEL_2 -lcN
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List
+#        -o C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj
+#        --no_cse --no_unroll --no_inline --no_code_motion --no_tbaa
+#        --no_clustering --no_scheduling --debug --endian=little
+#        --cpu=ARM926EJ-S -e --fpu=None --dlib_config "C:\Program Files
+#        (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\ -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\
+#        --cpu_mode thumb -Ol --use_c++_inline
+#    List file    =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List\arm926ej_cp15_drv.lst
+#    Object file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj\arm926ej_cp15_drv.o
+#
+###############################################################################
+
+C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\sys\lpc313x\bsp\arm926ej_cp15_drv.c
+      1          /*************************************************************************
+      2           *
+      3           *    Used with ICCARM and AARM.
+      4           *
+      5           *    (c) Copyright IAR Systems 2006
+      6           *
+      7           *    File name   : arm926ej_cp15_drv.c
+      8           *    Description : Driver for the ARM926EJ's CP15
+      9           *
+     10           *    History :
+     11           *    1. Date        : September, 8 2006
+     12           *       Author      : Stanimir Bonev
+     13           *       Description : Create
+     14           *
+     15           *    $Revision: 31493 $
+     16           **************************************************************************/
+     17          
+     18          #include "arm926ej_cp15_drv.h"
+     19          
+     20          /*************************************************************************
+     21           * Function Name: CP15_GetID
+     22           * Parameters: none
+     23           *
+     24           * Return: Int32U
+     25           *
+     26           * Description: Function returns the ID register
+     27           *
+     28           *************************************************************************/
+     29          __arm Int32U CP15_GetID (void)
+     30          {
+     31             return(__MRC(15,0,CP15_ID,0,0));
+     32          }
+     33          
+     34          /*************************************************************************
+     35           * Function Name: CP15_GetCacheType
+     36           * Parameters: none
+     37           *
+     38           * Return: Int32U
+     39           *
+     40           * Description: Function returns the Cache type
+     41           *
+     42           *************************************************************************/
+     43          __arm Int32U CP15_GetCacheType (void)
+     44          {
+     45             return(__MRC(15,0,CP15_ID,0,1));
+     46          }
+     47          
+     48          /*************************************************************************
+     49           * Function Name: CP15_GetTCM_Status
+     50           * Parameters: none
+     51           *
+     52           * Return: Int32U
+     53           *
+     54           * Description: Function returns the TCM status
+     55           *
+     56           *************************************************************************/
+     57          __arm Int32U CP15_GetTCM_Status (void)
+     58          {
+     59             return(__MRC(15,0,CP15_ID,0,2));
+     60          }
+     61          
+     62          /*************************************************************************
+     63           * Function Name: CP15_GetTtb
+     64           * Parameters: none
+     65           *
+     66           * Return: Int32U
+     67           *
+     68           * Description: Function returns the TTB register
+     69           *
+     70           *************************************************************************/
+     71          __arm Int32U CP15_GetTtb (void)
+     72          {
+     73             return(__MRC(15,0,CP15_TTB_ADDR,0,0));
+     74          }
+     75          
+     76          /*************************************************************************
+     77           * Function Name: CP15_GetStatus
+     78           * Parameters: none
+     79           *
+     80           * Return: Int32U
+     81           *
+     82           * Description: Function returns the MMU control register
+     83           *
+     84           *************************************************************************/
+     85          __arm Int32U CP15_GetStatus (void)
+     86          {
+     87             return(__MRC(15,0,CP15_CTRL,0,0));
+     88          }
+     89          
+     90          /*************************************************************************
+     91           * Function Name: CP15_GetDomain
+     92           * Parameters: none
+     93           *
+     94           * Return: Int32U
+     95           *
+     96           * Description: Function returns the MMU domain access register
+     97           *
+     98           *************************************************************************/
+     99          __arm Int32U CP15_GetDomain (void)
+    100          {
+    101             return(__MRC(15,0,CP15_DA_CTRL,0,0));
+    102          }
+    103          
+    104          /*************************************************************************
+    105           * Function Name: CP15_SetDomain
+    106           * Parameters: Int32U DomainAccess
+    107           *
+    108           * Return: Int32U
+    109           *
+    110           * Description: Function set the MMU domain access register
+    111           *
+    112           *************************************************************************/
+    113          __arm void CP15_SetDomain (Int32U DomainAccess)
+    114          {
+    115             register Int32U Val = DomainAccess;
+    116             __MCR(15,0,Val,CP15_DA_CTRL,0,0);
+    117          }
+    118          
+    119          /*************************************************************************
+    120           * Function Name: CP15_InvalAllCache
+    121           * Parameters: none
+    122           *
+    123           * Return: none
+    124           *
+    125           * Description: Invalidate entire cache
+    126           *
+    127           *************************************************************************/
+    128          __arm void CP15_InvalAllCache (void)
+    129          {
+    130             register volatile Int32U Dummy;
+    131             __MCR(15,0,Dummy,CP15_CACHE_OPR,7,0);
+    132          }
+    133          
+    134          /*************************************************************************
+    135           * Function Name: CP15_InvalAllTbl
+    136           * Parameters: none
+    137           *
+    138           * Return: none
+    139           *
+    140           * Description: Invalidate TLB
+    141           *
+    142           *************************************************************************/
+    143          __arm void CP15_InvalAllTbl (void)
+    144          {
+    145             register volatile Int32U Dummy;
+    146             __MCR(15,0,Dummy,CP15_TBL_OPR,7,0);
+    147          }
+    148          
+    149          /*************************************************************************
+    150           * Function Name: CP15_SetMmu
+    151           * Parameters: Int32U Ctrl
+    152           *
+    153           * Return: none
+    154           *
+    155           * Description: Set CP15 control register
+    156           *
+    157           *************************************************************************/
+    158          __arm void CP15_SetMmu (Int32U Ctrl)
+    159          {
+    160             register volatile Int32U Val = Ctrl;
+    161             __MCR(15,0,Val,CP15_CTRL,0,0);
+    162          }
+    163          
+    164          /*************************************************************************
+    165           * Function Name: CP15_SetTtb
+    166           * Parameters: pInt32U pTtb
+    167           *
+    168           * Return: none
+    169           *
+    170           * Description: Set CP15 TTB base address register
+    171           *
+    172           *************************************************************************/
+    173          __arm void CP15_SetTtb (pInt32U pTtb)
+    174          {
+    175             register volatile Int32U Val = (Int32U)pTtb;
+    176             __MCR(15,0,Val,CP15_TTB_ADDR,0,0);
+    177          }
+    178          
+    179          /*************************************************************************
+    180           * Function Name: CP15_SetDac
+    181           * Parameters: Int32U da
+    182           *
+    183           * Return: none
+    184           *
+    185           * Description: Set CP15 domain access register
+    186           *
+    187           *************************************************************************/
+    188          __arm void CP15_SetDac (Int32U da)
+    189          {
+    190             register volatile Int32U Val = da;
+    191             __MCR(15,0,Val,CP15_DA_CTRL,0,0);
+    192          }
+    193          
+    194          /*************************************************************************
+    195           * Function Name: CP15_WriteBuffFlush
+    196           * Parameters: none
+    197           *
+    198           * Return: none
+    199           *
+    200           * Description:  Flush the write buffer and wait for completion
+    201           *              of the flush.
+    202           *
+    203           *************************************************************************/
+    204          __arm void CP15_WriteBuffFlush (void)
+    205          {
+    206             register volatile Int32U Val;
+    207             __MCR(15,0,Val,CP15_CACHE_OPR,10,4);
+    208          }
+    209          
+    210          /*************************************************************************
+    211           * Function Name: CP15_GetFaultStat
+    212           * Parameters: none
+    213           *
+    214           * Return: Int32U
+    215           *
+    216           * Description: Function returns the MMU fault status register
+    217           *
+    218           *************************************************************************/
+    219          __arm Int32U CP15_GetFaultStat (void)
+    220          {
+    221             return(__MRC(15,0,CP15_FAULT_STAT,0,0));
+    222          }
+    223          
+    224          /*************************************************************************
+    225           * Function Name: CP15_GetFaultAddr
+    226           * Parameters: none
+    227           *
+    228           * Return: Int32U
+    229           *
+    230           * Description: Function returns the MMU fault address register
+    231           *
+    232           *************************************************************************/
+    233          __arm Int32U CP15_GetFaultAddr (void)
+    234          {
+    235             return(__MRC(15,0,CP15_FAULT_ADDR,0,0));
+    236          }
+    237          
+    238          /*************************************************************************
+    239           * Function Name: CP15_GetFcsePid
+    240           * Parameters: none
+    241           *
+    242           * Return: Int32U
+    243           *
+    244           * Description: Function returns the MMU Process identifier
+    245           *             FCSE PID register
+    246           *
+    247           *************************************************************************/
+    248          __arm Int32U CP15_GetFcsePid (void)
+    249          {
+    250             return(__MRC(15,0,CP15_PROCESS_IDNF,0,0));
+    251          }
+    252          
+    253          /*************************************************************************
+    254           * Function Name: CP15_GetPraceProcId
+    255           * Parameters: none
+    256           *
+    257           * Return: Int32U
+    258           *
+    259           * Description: Function returns the MMU Trace Process identifier
+    260           *             register
+    261           *
+    262           *************************************************************************/
+    263          __arm Int32U CP15_GetPraceProcId (void)
+    264          {
+    265             return(__MRC(15,0,CP15_PROCESS_IDNF,0,1));
+    266          }
+    267          
+    268          /*************************************************************************
+    269           * Function Name: CP15_SetFcsePid
+    270           * Parameters: Int32U FcsePid
+    271           *
+    272           * Return: none
+    273           *
+    274           * Description: Function set the MMU Process identifier
+    275           *             FCSE PID register
+    276           *
+    277           *************************************************************************/
+    278          __arm void CP15_SetFcsePid (Int32U FcsePid)
+    279          {
+    280             register Int32U Val = FcsePid;
+    281             __MCR(15,0,Val,CP15_PROCESS_IDNF,0,0);
+    282          }
+    283          
+    284          /*************************************************************************
+    285           * Function Name: CP15_GetPraceProcId
+    286           * Parameters: Int32U
+    287           *
+    288           * Return: none
+    289           *
+    290           * Description: Function set the MMU Trace Process identifier
+    291           *             register
+    292           *
+    293           *************************************************************************/
+    294          __arm void CP15_SetPraceProcId (Int32U Trace)
+    295          {
+    296             register Int32U Val = Trace;
+    297             __MCR(15,0,Val,CP15_PROCESS_IDNF,0,1);
+    298          }
+    299          
+    300          /*************************************************************************
+    301           * Function Name: CP15_WriteBuffFlush
+    302           * Parameters: pTtSectionBlock_t pTtSB, pTtTableBlock_t pTtTB
+    303           *
+    304           * Return: Boolean
+    305           *
+    306           *  Returns error if MMU is enabled or if target
+    307           * Translation Table address is not 16K aligned. Clear the
+    308           * Translation Table area. Build the Translation Table from the
+    309           * initialization data in the Section Block array. Return no error.
+    310           *
+    311           * Description:  Initializes the MMU tables.
+    312           *
+    313           *
+    314           *************************************************************************/
+    315          Boolean CP15_InitMmuTtb(const TtSectionBlock_t * pTtSB,
+    316                                  const TtTableBlock_t * pTtTB)
+    317          {
+    318             Int32U i, pa, pa_inc, va_ind;
+    319             pInt32U pTtb;
+    320             TableType_t TableType;
+    321             while(1)
+    322             {
+    323                TableType = pTtTB->TableType;
+    324                switch(TableType)
+    325                {
+    326                   case TableL1:
+    327                      pTtb = pTtTB->TableAddr;
+    328                      if((Int32U)pTtb & L1_ENTRIES_NUMB-1)
+    329                      {
+    330                         return(FALSE);
+    331                      }
+    332                      pa_inc = 0x100000;
+    333                      pa = L1_ENTRIES_NUMB;
+    334                      break;
+    335                   case TableL2_Coarse:
+    336                      pTtb = pTtTB->TableAddr;
+    337                      if((Int32U)pTtb & L2_CP_ENTRIES_NUMB-1)
+    338                      {
+    339                         return(FALSE);
+    340                      }
+    341                      pa_inc = 0x1000;
+    342                      pa = L2_CP_ENTRIES_NUMB;
+    343                      break;
+    344                   case TableL2_Fine:
+    345                      pTtb = pTtTB->TableAddr;
+    346                      if((Int32U)pTtb & L2_FP_ENTRIES_NUMB-1)
+    347                      {
+    348                         return(FALSE);
+    349                      }
+    350                      pa_inc = 0x400;
+    351                      pa = L2_FP_ENTRIES_NUMB;
+    352                      break;
+    353                   default:
+    354                      return(TRUE);
+    355                }
+    356          
+    357                // Clear the entire Translation Table This results in LxD_TYPE_FAULT
+    358                // being the default for any uninitialized entries.
+    359                for(i = 0; i < pa; ++i)
+    360                {
+    361                   *(pTtb+i) = TT_ENTRY_INVALID;
+    362                }
+    363          
+    364                // Build the translation table from user provided pTtSectionBlock_t array
+    365                while(pTtSB->NubrOfSections != 0)
+    366                {
+    367                   pa = pTtSB->PhysAddr;
+    368                   switch(TableType)
+    369                   {
+    370                      case TableL1:
+    371                         va_ind = (pTtSB->VirtAddr >> 20) & (L1_ENTRIES_NUMB-1);
+    372                         if((va_ind + pTtSB->NubrOfSections) > L1_ENTRIES_NUMB)
+    373                         {
+    374                            return(FALSE);
+    375                         }
+    376                         break;
+    377                      case TableL2_Coarse:
+    378                         va_ind = (pTtSB->VirtAddr >> 12) & (L2_CP_ENTRIES_NUMB-1);
+    379                         if((va_ind + pTtSB->NubrOfSections) > L2_CP_ENTRIES_NUMB)
+    380                         {
+    381                            return(FALSE);
+    382                         }
+    383                         break;
+    384                      case TableL2_Fine:
+    385                         va_ind = (pTtSB->VirtAddr >> 10) & (L2_FP_ENTRIES_NUMB-1);
+    386                         if((va_ind + pTtSB->NubrOfSections) > L2_FP_ENTRIES_NUMB)
+    387                         {
+    388                            return(FALSE);
+    389                         }
+    390                   }
+    391                   for(i = 0; i < pTtSB->NubrOfSections; ++i, ++va_ind)
+    392                   {
+    393                      switch(TableType)
+    394                      {
+    395                         case TableL1:
+    396                            switch(pTtSB->Entry.Type)
+    397                            {
+    398                               case TtL1CoarsePage:
+    399                                  *(pTtb+va_ind) |= pTtSB->Entry.Data | (pa & TTL1_CP_PADDR_MASK);
+    400                                  break;
+    401                               case TtL1Section:
+    402                                  *(pTtb+va_ind) |= pTtSB->Entry.Data | (pa & TTL1_SECTION_PADDR_MASK);
+    403                                  break;
+    404                               case TtL1FinePage:
+    405                                  *(pTtb+va_ind) |= pTtSB->Entry.Data | (pa & TTL1_FP_PADDR_MASK);
+    406                                  break;
+    407                               default:
+    408                                  return(FALSE);
+    409                            }
+    410                            break;
+    411                         case TableL2_Coarse:
+    412                            switch(pTtSB->Entry.Type)
+    413                            {
+    414                               case TtL2LargePage:
+    415                                  *(pTtb+va_ind) |= pTtSB->Entry.Data | (pa & TTL2_LP_PADDR_MASK);
+    416                                  break;
+    417                               case TtL2SmallPage:
+    418                                  *(pTtb+va_ind) |= pTtSB->Entry.Data | (pa & TTL2_SP_PADDR_MASK);
+    419                                  break;
+    420                               default:
+    421                                  return(FALSE);
+    422                            }
+    423                            break;
+    424                         case TableL2_Fine:
+    425                            switch(pTtSB->Entry.Type)
+    426                            {
+    427                               case TtL2LargePage:
+    428                                  *(pTtb+va_ind) |= pTtSB->Entry.Data | (pa & TTL2_LP_PADDR_MASK);
+    429                                  break;
+    430                               case TtL2SmallPage:
+    431                                  *(pTtb+va_ind) |= pTtSB->Entry.Data | (pa & TTL2_SP_PADDR_MASK);
+    432                                  break;
+    433                               case TtL2TinyPage:
+    434                                  *(pTtb+va_ind) |= pTtSB->Entry.Data | (pa & TTL2_TP_PADDR_MASK);
+    435                                  break;
+    436                               default:
+    437                                  return(FALSE);
+    438                            }
+    439                            break;
+    440                      }
+    441                      pa += pa_inc;
+    442                   }
+    443                   ++pTtSB;
+    444                }
+    445                ++pTtSB;
+    446                ++pTtTB;
+    447             }
+    448          }
+    449          
+    450          /*************************************************************************
+    451           * Function Name: CP15_Mmu
+    452           * Parameters: Boolean Enable
+    453           *
+    454           * Return: none
+    455           *
+    456           * Description: Enable/Disable MMU
+    457           *
+    458           *************************************************************************/
+    459          void CP15_Mmu (Boolean Enable)
+    460          {
+    461             Int32U Val = CP15_GetStatus();
+    462             if(Enable)
+    463             {
+    464                Val |= CP15_CTRL_M;
+    465             }
+    466             else
+    467             {
+    468                Val &= ~(CP15_CTRL_M | CP15_CTRL_C);
+    469             }
+    470             CP15_InvalAllTbl();
+    471             CP15_SetMmu(Val);
+    472          }
+    473          
+    474          /*************************************************************************
+    475           * Function Name: CP15_Cache
+    476           * Parameters: Boolean Enable
+    477           *
+    478           * Return: none
+    479           *
+    480           * Description: Enable/Disable Both Cache
+    481           *
+    482           *************************************************************************/
+    483          void CP15_Cache (Boolean Enable)
+    484          {
+    485             Int32U Val = CP15_GetStatus();
+    486             if(Enable)
+    487             {
+    488                CP15_InvalAllCache();
+    489                Val |= CP15_CTRL_M | CP15_CTRL_C | CP15_CTRL_I;
+    490             }
+    491             else
+    492             {
+    493                Val &= ~CP15_CTRL_C;
+    494             }
+    495             CP15_SetMmu(Val);
+    496          }
+    497          
+    498          /*************************************************************************
+    499           * Function Name: CP15_ICache
+    500           * Parameters: Boolean Enable
+    501           *
+    502           * Return: none
+    503           *
+    504           * Description: Enable/Disable I cache
+    505           *
+    506           *************************************************************************/
+    507          void CP15_ICache (Boolean Enable)
+    508          {
+    509             Int32U Val = CP15_GetStatus();
+    510             if(Enable)
+    511             {
+    512                Val |= CP15_CTRL_I;
+    513             }
+    514             else
+    515             {
+    516                Val &= ~CP15_CTRL_I;
+    517             }
+    518             CP15_SetMmu(Val);
+    519          }
+    520          
+    521          /*************************************************************************
+    522           * Function Name: CP15_DCache
+    523           * Parameters: Boolean Enable
+    524           *
+    525           * Return: none
+    526           *
+    527           * Description: Enable/Disable D cache
+    528           *
+    529           *************************************************************************/
+    530          void CP15_DCache (Boolean Enable)
+    531          {
+    532             Int32U Val = CP15_GetStatus();
+    533             if(Enable)
+    534             {
+    535                Val |= CP15_CTRL_M | CP15_CTRL_C;
+    536             }
+    537             else
+    538             {
+    539                Val &= ~CP15_CTRL_C;
+    540             }
+    541             CP15_SetMmu(Val);
+    542          }
+    543          
+    544          /*************************************************************************
+    545           * Function Name: CP15_SysProt
+    546           * Parameters: Boolean Enable
+    547           *
+    548           * Return: none
+    549           *
+    550           * Description: Enable/Disable S cache
+    551           *
+    552           *************************************************************************/
+    553          void CP15_SysProt (Boolean Enable)
+    554          {
+    555             Int32U Val = CP15_GetStatus();
+    556             if(Enable)
+    557             {
+    558                Val |= CP15_CTRL_S;
+    559             }
+    560             else
+    561             {
+    562                Val &= ~CP15_CTRL_S;
+    563             }
+    564             CP15_SetMmu(Val);
+    565          }
+    566          
+    567          /*************************************************************************
+    568           * Function Name: CP15_RomProt
+    569           * Parameters: Boolean Enable
+    570           *
+    571           * Return: none
+    572           *
+    573           * Description: Enable/Disable ROM protection.
+    574           *
+    575           *************************************************************************/
+    576          void CP15_RomProt (Boolean Enable)
+    577          {
+    578             Int32U Val = CP15_GetStatus();
+    579             if(Enable)
+    580             {
+    581                Val |= CP15_CTRL_R;
+    582             }
+    583             else
+    584             {
+    585                Val &= ~CP15_CTRL_R;
+    586             }
+    587             CP15_SetMmu(Val);
+    588          }
+
+   Maximum stack usage in bytes:
+
+   .cstack Function
+   ------- --------
+      16   CP15_Cache
+        16   -> CP15_GetStatus
+        16   -> CP15_InvalAllCache
+        16   -> CP15_SetMmu
+       8   CP15_DCache
+         8   -> CP15_GetStatus
+         8   -> CP15_SetMmu
+       0   CP15_GetCacheType
+       0   CP15_GetDomain
+       0   CP15_GetFaultAddr
+       0   CP15_GetFaultStat
+       0   CP15_GetFcsePid
+       0   CP15_GetID
+       0   CP15_GetPraceProcId
+       0   CP15_GetStatus
+       0   CP15_GetTCM_Status
+       0   CP15_GetTtb
+       8   CP15_ICache
+         8   -> CP15_GetStatus
+         8   -> CP15_SetMmu
+      36   CP15_InitMmuTtb
+        36 __aeabi_uread4
+       4   CP15_InvalAllCache
+       4   CP15_InvalAllTbl
+      16   CP15_Mmu
+        16   -> CP15_GetStatus
+        16   -> CP15_InvalAllTbl
+        16   -> CP15_SetMmu
+       8   CP15_RomProt
+         8   -> CP15_GetStatus
+         8   -> CP15_SetMmu
+       4   CP15_SetDac
+       0   CP15_SetDomain
+       0   CP15_SetFcsePid
+       4   CP15_SetMmu
+       0   CP15_SetPraceProcId
+       4   CP15_SetTtb
+       8   CP15_SysProt
+         8   -> CP15_GetStatus
+         8   -> CP15_SetMmu
+       4   CP15_WriteBuffFlush
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+       4  ??DataTable4
+       4  ??DataTable4_1
+       4  ??DataTable4_2
+       4  ??DataTable4_3
+       4  ??DataTable4_4
+       4  ??DataTable4_5
+      38  CP15_Cache
+      30  CP15_DCache
+       8  CP15_GetCacheType
+       8  CP15_GetDomain
+       8  CP15_GetFaultAddr
+       8  CP15_GetFaultStat
+       8  CP15_GetFcsePid
+       8  CP15_GetID
+       8  CP15_GetPraceProcId
+       8  CP15_GetStatus
+       8  CP15_GetTCM_Status
+       8  CP15_GetTtb
+      34  CP15_ICache
+     674  CP15_InitMmuTtb
+      20  CP15_InvalAllCache
+      20  CP15_InvalAllTbl
+      38  CP15_Mmu
+      34  CP15_RomProt
+      24  CP15_SetDac
+       8  CP15_SetDomain
+       8  CP15_SetFcsePid
+      24  CP15_SetMmu
+       8  CP15_SetPraceProcId
+      24  CP15_SetTtb
+      34  CP15_SysProt
+      20  CP15_WriteBuffFlush
+
+ 
+ 1 142 bytes in section .text
+ 
+ 1 142 bytes of CODE memory
+
+Errors: none
+Warnings: none

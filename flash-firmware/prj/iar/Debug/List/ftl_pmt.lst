@@ -1,0 +1,664 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        02/Aug/2023  19:53:33
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\core\ftl\ftl_pmt.c
+#    Command line =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\core\ftl\ftl_pmt.c
+#        -D BOOT_LEVEL_2 -lcN
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List
+#        -o C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj
+#        --no_cse --no_unroll --no_inline --no_code_motion --no_tbaa
+#        --no_clustering --no_scheduling --debug --endian=little
+#        --cpu=ARM926EJ-S -e --fpu=None --dlib_config "C:\Program Files
+#        (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\ -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\
+#        --cpu_mode thumb -Ol --use_c++_inline
+#    List file    =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List\ftl_pmt.lst
+#    Object file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj\ftl_pmt.o
+#
+###############################################################################
+
+C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\core\ftl\ftl_pmt.c
+      1          /*********************************************************
+      2           * Module name: ftl_pmt.c
+      3           *
+      4           * Copyright 2010, 2011. All Rights Reserved, Crane Chu.
+      5           *
+      6           * This file is part of OpenNFM.
+      7           *
+      8           * OpenNFM is free software: you can redistribute it and/or 
+      9           * modify it under the terms of the GNU General Public 
+     10           * License as published by the Free Software Foundation, 
+     11           * either version 3 of the License, or (at your option) any 
+     12           * later version.
+     13           * 
+     14           * OpenNFM is distributed in the hope that it will be useful,
+     15           * but WITHOUT ANY WARRANTY; without even the implied 
+     16           * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR 
+     17           * PURPOSE. See the GNU General Public License for more 
+     18           * details.
+     19           *
+     20           * You should have received a copy of the GNU General Public 
+     21           * License along with OpenNFM. If not, see 
+     22           * <http://www.gnu.org/licenses/>.
+     23           *
+     24           * First written on 2010-01-01 by cranechu@gmail.com
+     25           * Updated by vinay.g.jain@gmail.com on Nov 22 2014.
+     26           *
+     27           * Module Description:
+     28           *    Page Mapping Table. It contains 2 layers of table. 
+     29           *    The first layer is ROOT, and points to every second
+     30           *       layer of PMT (aka. CLUSTER)
+     31           *    The second layer is PMT pages, and holding logical 
+     32           *       page mapping info, pointing to UBI block/page.
+     33           *
+     34           *********************************************************/
+     35          
+     36          #include <core\inc\cmn.h>
+     37          #include <core\inc\ftl.h>
+     38          #include <core\inc\ubi.h>
+     39          #include <sys\sys.h>
+     40          #include "ftl_inc.h"
+     41          
+     42          #define PMT_CURRENT_BLOCK  (PM_NODE_BLOCK(root_table.pmt_current_block))
+     43          #define PMT_CURRENT_PAGE   (PM_NODE_PAGE(root_table.pmt_current_block))
+     44          #define PMT_RECLAIM_BLOCK  (PM_NODE_BLOCK(root_table.pmt_reclaim_block))
+     45          #define PMT_RECLAIM_PAGE   (PM_NODE_PAGE(root_table.pmt_reclaim_block))
+     46          
+     47          #if defined(__ICCARM__)
+     48          /* must be aligned to 4bytes, because the lowest 2 bits is reserved */
+     49          #pragma data_alignment=4
+     50          #endif
+     51          static PM_NODE pm_node_caches[PMT_CACHE_COUNT];
+     52          static PM_NODE_ADDR pm_cache_origin_location[PMT_CACHE_COUNT];
+     53          static PMT_CLUSTER pm_cache_cluster[PMT_CACHE_COUNT];
+     54          /* meta data in last page */
+     55          static PMT_CLUSTER meta_data[PAGE_PER_PHY_BLOCK];
+     56          /* buffer used in reclaim */
+     57          static PMT_CLUSTER clusters[MPP_SIZE / sizeof(PMT_CLUSTER)];
+     58          static UINT8 pm_node_buffer[MPP_SIZE];
+     59          
+     60          
+     61          //jsjpenn
+     62          
+     63          // JD
+     64          UINT8 invalid_time[3991] = {0};
+     65          
+     66          // end JD
+     67          
+     68          extern  STATUS pmt_reclaim_blocks();//为了能在ftl_api.c中被调用
+     69          
+     70          
+     71          STATUS PMT_Format() {
+     72            LOG_BLOCK pmt_block = PMT_START_BLOCK;
+     73            PAGE_OFF pmt_page = 0;
+     74            PM_NODE pm_node;
+     75            STATUS ret = STATUS_SUCCESS;
+     76            SPARE spare;
+     77            UINT32 i;
+     78            UINT32 j;
+     79            UINT32 pmt_cluster_count = ((FTL_Capacity() + PM_PER_NODE - 1) /  PM_PER_NODE);//总簇数471
+     80            /* root table has enough space to hold 1st level of pmt */
+     81            ASSERT(pmt_cluster_count < MAX_PM_CLUSTERS);
+     82          
+     83            for (i = 0; i < pmt_cluster_count; i++) {
+     84              if (ret == STATUS_SUCCESS) {
+     85                /* format a cluster of PMT */
+     86                for (j = 0; j < PM_PER_NODE; j++) {//512
+     87                  pm_node[j] = INVALID_PM_NODE;
+     88                }
+     89                spare[0] = i;//簇号
+     90                ret = UBI_Write(pmt_block, pmt_page, pm_node, spare, FALSE);
+     91              }
+     92          
+     93              if (ret == STATUS_SUCCESS) {
+     94                meta_data[pmt_page] = i;//簇号
+     95          
+     96                PM_NODE_SET_BLOCKPAGE(root_table.page_mapping_nodes[i], pmt_block, pmt_page);
+     97          
+     98                /* last page is reserved for meta data */
+     99                if (pmt_page < PAGE_PER_PHY_BLOCK - 1) {
+    100                  pmt_page++;
+    101                }
+    102          
+    103                if (pmt_page == PAGE_PER_PHY_BLOCK - 1) {
+    104                  ret = UBI_Write(pmt_block, pmt_page, meta_data, NULL, FALSE);//PMT区块的最后一个存前63页映射的簇号
+    105                  if (ret == STATUS_SUCCESS) {
+    106                    block_dirty_table[pmt_block] = 0;
+    107                    pmt_page = 0;
+    108                    pmt_block++;
+    109                  }
+    110                }
+    111              }
+    112            }
+    113          
+    114            if (ret == STATUS_SUCCESS) {
+    115              /* set journal blocks */
+    116              PM_NODE_SET_BLOCKPAGE(root_table.pmt_current_block, pmt_block, pmt_page);
+    117              PM_NODE_SET_BLOCKPAGE(root_table.pmt_reclaim_block, pmt_block + 1, 0);
+    118          
+    119              /* update block dirty table */
+    120              block_dirty_table[pmt_block] = 0;
+    121              block_dirty_table[pmt_block + 1] = 0;//表示已分配
+    122            }
+    123          
+    124            return ret;
+    125          }
+    126          
+    127          STATUS PMT_Init() {
+    128            UINT32 i;
+    129            STATUS ret = STATUS_SUCCESS;
+    130            
+    131            
+    132            
+    133            /* init cache */
+    134            for (i = 0; i < PMT_CACHE_COUNT; i++) {//4
+    135              memset(pm_node_caches[i], 0, MPP_SIZE);
+    136              pm_cache_origin_location[i] = INVALID_PM_NODE;
+    137              pm_cache_cluster[i] = INVALID_CLUSTER;
+    138            }
+    139          
+    140            /* PLR: the PMT is only validated after writing ROOT. do some test. */
+    141            return ret;
+    142          }
+    143          
+    144          STATUS PMT_Update(PGADDR page_addr, LOG_BLOCK block, PAGE_OFF page) {
+    145            //uart_printf("PMT UPDATE\n");
+    146            PMT_CLUSTER cluster = CLUSTER_INDEX(page_addr);//计算逻辑I地址所在簇号
+    147            PM_NODE_ADDR* cluster_addr;
+    148            LOG_BLOCK edit_block;
+    149            STATUS ret = STATUS_SUCCESS;
+    150          
+    151            if (PM_NODE_IS_CACHED(root_table.page_mapping_nodes[cluster]) == FALSE) {
+    152              /* load page in cache before updating bdt/hdi/root,
+    153               * because it may cause a commit. */
+    154              ret = PMT_Load(PM_NODE_BLOCK(root_table.page_mapping_nodes[cluster]),
+    155                             PM_NODE_PAGE(root_table.page_mapping_nodes[cluster]),
+    156                             cluster);
+    157            }
+    158          
+    159            if (ret == STATUS_SUCCESS) {
+    160              cluster_addr = PM_NODE_ADDRESS(root_table.page_mapping_nodes[cluster]);
+    161              if (cluster_addr[PAGE_IN_CLUSTER(page_addr)] != INVALID_PM_NODE) {
+    162                /* update BDT: increase dirty page count of the edited data block */
+    163                edit_block = PM_NODE_BLOCK(cluster_addr[PAGE_IN_CLUSTER(page_addr)]);//目标映射所在簇在PMT区的块号
+    164                block_dirty_table[edit_block]++;
+    165                
+    166                if(block_dirty_table[edit_block] == 63) {
+    167                    invalid_time[edit_block] = current_time;
+    168                }
+    169                
+    170                ASSERT(block_dirty_table[edit_block] <= MAX_DIRTY_PAGES);
+    171              }
+    172          
+    173              /* update PMT */
+    174              if (block != INVALID_BLOCK) {
+    175                ASSERT(page != INVALID_PAGE);
+    176                PM_NODE_SET_BLOCKPAGE(cluster_addr[PAGE_IN_CLUSTER(page_addr)], block, page);//逻辑I的映射更新到新的逻辑II块页上
+    177                                                                                             //相当于修改了SRAM中对应的pm_node_caches[][]
+    178              } else {
+    179                /* trim page, set it invalid page in PMT, and it will be
+    180                 * discarded in the next reclaim.
+    181                 */
+    182                ASSERT(page == INVALID_PAGE);
+    183                cluster_addr[PAGE_IN_CLUSTER(page_addr)] = INVALID_PM_NODE;
+    184              }
+    185          
+    186              /* set dirty bit */
+    187              PM_NODE_SET_DIRTY(root_table.page_mapping_nodes[cluster]);//将该簇映射设为脏，即被更新过了
+    188            }
+    189          
+    190            return ret;
+    191          }
+    192          
+    193          STATUS PMT_Search(PGADDR page_addr, LOG_BLOCK* block, PAGE_OFF* page) {
+    194            PMT_CLUSTER cluster = CLUSTER_INDEX(page_addr);
+    195            PM_NODE_ADDR* cluster_addr;
+    196            PM_NODE_ADDR pm_node;
+    197            STATUS ret = STATUS_SUCCESS;
+    198            
+    199            // JD
+    200            //uart_printf("addr: %d\n", page_addr);
+    201            if(ftl_read_state == 0) {
+    202              if (PM_NODE_IS_CACHED(root_table.page_mapping_nodes[cluster]) == FALSE) {
+    203                /* load page in cache */
+    204                ret = PMT_Load(PM_NODE_BLOCK(root_table.page_mapping_nodes[cluster]),
+    205                             PM_NODE_PAGE(root_table.page_mapping_nodes[cluster]),
+    206                             cluster);
+    207              }
+    208          
+    209              if (ret == STATUS_SUCCESS) {
+    210                ASSERT(root_table.page_mapping_nodes[cluster] != INVALID_PM_NODE);
+    211          
+    212                cluster_addr = PM_NODE_ADDRESS(root_table.page_mapping_nodes[cluster]);
+    213                ASSERT(cluster_addr != 0);
+    214          
+    215                pm_node = cluster_addr[PAGE_IN_CLUSTER(page_addr)];
+    216                if (pm_node != INVALID_PM_NODE) {
+    217                  *block = PM_NODE_BLOCK(pm_node);
+    218                  *page = PM_NODE_PAGE(pm_node);
+    219                } else {
+    220                  *block = INVALID_BLOCK;
+    221                  *page = INVALID_PAGE;
+    222                }
+    223              }
+    224            }
+    225            else if(ftl_read_state == 1) {
+    226              UINT32 pmNodes[PM_PER_NODE];
+    227              LOG_BLOCK pmBlock = PMTRESORE_START_BLOCK + (int)(cluster / PAGE_PER_PHY_BLOCK); // The logical block number containing the PM
+    228              PAGE_OFF pmPage = cluster % PAGE_PER_PHY_BLOCK; // the page offset in pm block
+    229              
+    230          
+    231              
+    232              ftl_read_state = 0;
+    233              ret = UBI_Read(pmBlock, pmPage, &(pmNodes[0]), NULL);
+    234              ftl_read_state = 1;
+    235              
+    236              pm_node = pmNodes[PAGE_IN_CLUSTER(page_addr)];
+    237              if (pm_node != INVALID_PM_NODE) {
+    238                *block = PM_NODE_BLOCK(pm_node);
+    239                *page = PM_NODE_PAGE(pm_node);
+    240              } else {
+    241                *block = INVALID_BLOCK;
+    242                *page = INVALID_PAGE;
+    243              };
+    244              return ret;
+    245            }
+    246            // end JD
+    247          
+    248            return ret;
+    249          }
+    250          
+    251          static STATUS PMT_Load(LOG_BLOCK block, PAGE_OFF page, PMT_CLUSTER cluster) {
+    252            UINT32 i;
+    253            PM_NODE_ADDR* cache_addr = NULL;
+    254            STATUS ret = STATUS_SUCCESS;
+    255          
+    256            /* find the first empty cache slot */
+    257            for (i = 0; i < PMT_CACHE_COUNT; i++) {
+    258              if (pm_cache_origin_location[i] == INVALID_PM_NODE) {
+    259                break;
+    260              }
+    261            }
+    262          
+    263            if (i == PMT_CACHE_COUNT) {
+    264              i = 0;
+    265          
+    266              /* cache is full, commit to nand, and release all cache */
+    267              ret = DATA_Commit();
+    268              if (ret == STATUS_SUCCESS) {
+    269                /* use updated PMT block and page */
+    270                block = PM_NODE_BLOCK(root_table.page_mapping_nodes[cluster]);
+    271                page = PM_NODE_PAGE(root_table.page_mapping_nodes[cluster]);
+    272              }
+    273            }
+    274          
+    275            /* read out the PM node from UBI */
+    276            if (ret == STATUS_SUCCESS) {
+    277              cache_addr = &((pm_node_caches[i])[0]);
+    278              ret = UBI_Read(block, page, cache_addr, NULL);
+    279            }
+    280          
+    281            /* update cache info */
+    282            if (ret == STATUS_SUCCESS) {
+    283              PM_NODE_SET_BLOCKPAGE(pm_cache_origin_location[i], block, page);
+    284          
+    285              /* update the cache address in memory to PMT table */
+    286              root_table.page_mapping_nodes[cluster] = (UINT32) (cache_addr);
+    287              
+    288          
+    289              /* the page mapping should be clean in ram */
+    290              ASSERT((((UINT32 )(cache_addr)) & 0x3) == 0);
+    291          
+    292              pm_cache_cluster[i] = cluster;
+    293            }
+    294          
+    295            return ret;
+    296          }
+    297          
+    298          /* write back dirty node to UBI, and clear all cache */
+    299          STATUS PMT_Commit() {
+    300            UINT32 i;
+    301            PM_NODE_ADDR pm_node;
+    302            STATUS ret = STATUS_SUCCESS;
+    303          
+    304            /* find the dirty cache nodes */
+    305            for (i = 0; i < PMT_CACHE_COUNT; i++) {
+    306              if (pm_cache_cluster[i] == INVALID_CLUSTER) {
+    307                continue;
+    308              }
+    309          
+    310              pm_node = root_table.page_mapping_nodes[pm_cache_cluster[i]];//根据簇号，得到SRAM地址
+    311              ASSERT(PM_NODE_IS_CACHED(pm_node) == TRUE);
+    312              if (PM_NODE_IS_DIRTY(pm_node) == FALSE) {//clean
+    313                /* update pmt in root table */
+    314                root_table.page_mapping_nodes[pm_cache_cluster[i]] =
+    315                    pm_cache_origin_location[i];
+    316                continue;
+    317              }
+    318              //dirty
+    319              /* check empty page space */
+    320              if (PMT_CURRENT_PAGE != PAGE_PER_PHY_BLOCK) {
+    321                /* last page is reserved */
+    322                ASSERT(PMT_CURRENT_PAGE != (PAGE_PER_PHY_BLOCK - 1));
+    323          
+    324                if (ret == STATUS_SUCCESS) {
+    325                  /* write page to UBI */
+    326                  ret = UBI_Write(PMT_CURRENT_BLOCK, PMT_CURRENT_PAGE,
+    327                                  pm_node_caches[i], &pm_cache_cluster[i], FALSE);
+    328                  if (ret == STATUS_SUCCESS) {
+    329                    meta_data[PMT_CURRENT_PAGE] = pm_cache_cluster[i];
+    330                  }
+    331                }
+    332          
+    333                if (ret == STATUS_SUCCESS) {
+    334                  PMT_CLUSTER pm_cluster = pm_cache_cluster[i];
+    335                  LOG_BLOCK old_pm_block;
+    336          
+    337                  /* update pmt in root table */
+    338                  PM_NODE_SET_BLOCKPAGE(root_table.page_mapping_nodes[pm_cluster],
+    339                                        PMT_CURRENT_BLOCK, PMT_CURRENT_PAGE);
+    340          
+    341                  /* update pmt journal */
+    342                  PM_NODE_SET_BLOCKPAGE(root_table.pmt_current_block, PMT_CURRENT_BLOCK,
+    343                                        PMT_CURRENT_PAGE+1);
+    344          
+    345                  /* update the block dirty table */
+    346                  old_pm_block = PM_NODE_BLOCK(pm_cache_origin_location[i]);
+    347          
+    348                  block_dirty_table[old_pm_block]++;
+    349          
+    350                  ASSERT(block_dirty_table[old_pm_block] <= MAX_DIRTY_PAGES);
+    351                }
+    352              }
+    353          
+    354              if (PMT_CURRENT_PAGE == PAGE_PER_PHY_BLOCK - 1) {
+    355                if (ret == STATUS_SUCCESS) {
+    356                  ret = UBI_Write(PMT_CURRENT_BLOCK, PMT_CURRENT_PAGE,
+    357                                  meta_data, NULL, FALSE);
+    358                }
+    359          
+    360                if (ret == STATUS_SUCCESS) {
+    361                  /* flush WIP data on all dice */
+    362                  ret = UBI_Flush();
+    363                }
+    364          
+    365                if (ret == STATUS_SUCCESS) {
+    366                  ret = pmt_reclaim_blocks();
+    367                }
+    368              }
+    369            }
+    370          
+    371            if (ret == STATUS_SUCCESS) {
+    372              /* init the PMT to clear all cache */
+    373              ret = PMT_Init();
+    374            }
+    375          
+    376            return ret;
+    377          }
+    378          
+    379          
+    380          //jsjpenn
+    381          //为了能在ftl_api.c中被调用
+    382          
+    383          STATUS pmt_reclaim_blocks() {
+    384            uart_printf("PMT reclaim??\n");
+    385            UINT32 i = 0;
+    386            UINT32 found_block = 0;
+    387            UINT32 total_valid_page = 0;
+    388            PAGE_OFF next_dirty_count = 0;
+    389            PAGE_OFF target_dirty_count = MAX_DIRTY_PAGES;//63
+    390            STATUS ret = STATUS_SUCCESS;
+    391          
+    392            /* find dirtiest block in different dice as new journal blocks */
+    393            while (found_block != 1) {
+    394              for (i = PMT_START_BLOCK; i < PMT_START_BLOCK + PMT_BLOCK_COUNT; i++) {
+    395                //JD
+    396                if (block_dirty_table[i] == target_dirty_count) {//63
+    397                // end JD
+    398                  /* try to erase it */
+    399                  ret = UBI_ReadStatus(i);
+    400                } else {
+    401                  /* set the next target dirty count */
+    402                  if (block_dirty_table[i] < target_dirty_count
+    403                      && block_dirty_table[i] > next_dirty_count) {
+    404                    next_dirty_count = block_dirty_table[i];
+    405                  }
+    406                  continue;
+    407                }
+    408          
+    409                if (ret == STATUS_SUCCESS) {
+    410                  /* find a dirtiest block */
+    411                  total_valid_page = (MAX_DIRTY_PAGES - block_dirty_table[i]);
+    412                  found_block = 1;
+    413                  break;
+    414                }
+    415              }
+    416              target_dirty_count = next_dirty_count;
+    417            }
+    418          
+    419            if (ret == STATUS_SUCCESS) {
+    420              if (total_valid_page != 0) {
+    421                /* copy valid pages to the reclaim block */
+    422                LOG_BLOCK reclaim_block;
+    423                LOG_BLOCK dirty_block;
+    424                PAGE_OFF reclaim_page = 0;
+    425                PAGE_OFF page;
+    426          
+    427                reclaim_block = PM_NODE_BLOCK(root_table.pmt_reclaim_block);
+    428                dirty_block = i;
+    429          
+    430                ret = UBI_Read(dirty_block, PAGE_PER_PHY_BLOCK - 1, clusters, NULL);
+    431                if (ret == STATUS_SUCCESS) {
+    432                  for (page = 0; page < PAGE_PER_PHY_BLOCK - 1; page++) {
+    433                    PMT_CLUSTER cluster = clusters[page];
+    434                    PM_NODE_ADDR pm_node = root_table.page_mapping_nodes[cluster];
+    435                    UINT32 cleared_cache_index = INVALID_INDEX;
+    436          
+    437                    /* if cached, just need to copy clean page */
+    438                    if (PM_NODE_IS_CACHED(pm_node) == TRUE) {
+    439                      if (PM_NODE_IS_DIRTY(pm_node) == TRUE) {
+    440                        /* dirty page will be re-written by commit */
+    441                        pm_node = INVALID_PM_NODE;
+    442                      } else {
+    443                        /* reclaim clean cached pages */
+    444                        UINT32 i;
+    445          
+    446                        for (i = 0; i < PMT_CACHE_COUNT; i++) {
+    447                          if (pm_cache_cluster[i] == cluster) {
+    448                            break;
+    449                          }
+    450                        }
+    451          
+    452                        ASSERT(i != PMT_CACHE_COUNT);
+    453                        pm_node = pm_cache_origin_location[i];
+    454                        cleared_cache_index = i;
+    455                      }
+    456                    }
+    457          
+    458                    if (pm_node != INVALID_PM_NODE &&
+    459                    PM_NODE_BLOCK(pm_node) == dirty_block &&
+    460                    PM_NODE_PAGE(pm_node) == page) {
+    461                      /* copy valid page to reclaim block */
+    462                      ret = UBI_Read(dirty_block, page, pm_node_buffer, NULL);
+    463                      if (ret == STATUS_SUCCESS) {
+    464                        ret = UBI_Write(reclaim_block, reclaim_page, pm_node_buffer, NULL,
+    465                        FALSE);
+    466                      }
+    467          
+    468                      if (ret == STATUS_SUCCESS) {
+    469                        /* update mapping */
+    470                        PM_NODE_SET_BLOCKPAGE(root_table.page_mapping_nodes[cluster],
+    471                                              reclaim_block, reclaim_page);
+    472                        meta_data[reclaim_page] = cluster;
+    473                        reclaim_page++;
+    474          
+    475                        /* clear it from cache */
+    476                        if (cleared_cache_index != INVALID_INDEX) {
+    477                          memset(pm_node_caches[cleared_cache_index], 0, MPP_SIZE);
+    478                          pm_cache_origin_location[cleared_cache_index] =
+    479                          INVALID_PM_NODE;
+    480                          pm_cache_cluster[cleared_cache_index] = INVALID_CLUSTER;
+    481                        }
+    482                      }
+    483                    }
+    484                  }
+    485                }
+    486          
+    487                /* erase dirty block, and then update journals */
+    488                if (ret == STATUS_SUCCESS) {
+    489                  ret = UBI_Erase(dirty_block, dirty_block);
+    490                }
+    491          
+    492                if (ret == STATUS_SUCCESS) {
+    493                  PM_NODE_SET_BLOCKPAGE(root_table.pmt_current_block, reclaim_block,
+    494                                        reclaim_page);
+    495                  PM_NODE_SET_BLOCKPAGE(root_table.pmt_reclaim_block, dirty_block, 0);
+    496          
+    497                  /* reset the BDT */
+    498                  block_dirty_table[reclaim_block] = 0;
+    499                  block_dirty_table[dirty_block] = 0;
+    500                }
+    501              } else {
+    502                if (ret == STATUS_SUCCESS) {
+    503                  /* the die is NOT busy */
+    504                  ret = UBI_Erase(i, i);
+    505                }
+    506          
+    507                if (ret == STATUS_SUCCESS) {
+    508                  PM_NODE_SET_BLOCKPAGE(root_table.pmt_current_block, i, 0);
+    509          
+    510                  /* reset the BDT */
+    511                  block_dirty_table[i] = 0;
+    512                }
+    513              }
+    514            }
+    515          
+    516            return ret;
+    517          }
+
+   Maximum stack usage in bytes:
+
+   .cstack Function
+   ------- --------
+      16   PMT_Commit
+        16   -> PMT_Init
+        16   -> UBI_Flush
+        16   -> UBI_Write
+        16   -> pmt_reclaim_blocks
+    2088   PMT_Format
+      2088   -> FTL_Capacity
+      2088   -> UBI_Write
+      16   PMT_Init
+        16   -> __aeabi_memset
+      24   PMT_Load
+        24   -> DATA_Commit
+        24   -> UBI_Read
+    2072   PMT_Search
+      2072   -> PMT_Load
+      2072   -> UBI_Read
+      2072 __aeabi_uidivmod
+      32   PMT_Update
+        32   -> PMT_Load
+        32 __aeabi_uidivmod
+      40   pmt_reclaim_blocks
+        40   -> UBI_Erase
+        40   -> UBI_Read
+        40   -> UBI_ReadStatus
+        40   -> UBI_Write
+        40   -> __aeabi_memset
+        40   -> uart_printf
+      40   printint
+        40   -> UartWrite
+        40 __aeabi_uidiv
+        40 __aeabi_uidivmod
+      56   printuint
+        56   -> UartWrite
+        56 __aeabi_uidiv
+        56 __aeabi_uidivmod
+      40   uart_printf
+        40   -> UartWrite
+        40   -> printint
+        40   -> printuint
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+       4  ??DataTable4
+       4  ??DataTable4_1
+       4  ??DataTable5
+       4  ??DataTable5_1
+       4  ??DataTable5_2
+       4  ??DataTable5_3
+       4  ??DataTable5_4
+       4  ??DataTable6
+       4  ??DataTable6_1
+       4  ??DataTable6_2
+       4  ??DataTable6_3
+       4  ??DataTable7
+       4  ??DataTable7_1
+       4  ??DataTable7_2
+       4  ??DataTable7_3
+       4  ??DataTable7_4
+       4  ??DataTable7_5
+       4  ??DataTable8
+       4  ??DataTable8_1
+       4  ??DataTable8_2
+       4  ??DataTable9
+       4  ??DataTable9_1
+       4  ??DataTable9_2
+       4  ??DataTable9_3
+       4  ??DataTable9_4
+       4  ??DataTable9_5
+       4  ??DataTable9_6
+       8  ?_0
+      16  ?_1
+     382  PMT_Commit
+     238  PMT_Format
+      68  PMT_Init
+     170  PMT_Load
+     304  PMT_Search
+     270  PMT_Update
+    2048  clusters
+      20  digits
+      20  digits
+    3992  invalid_time
+     256  meta_data
+      16  pm_cache_cluster
+      16  pm_cache_origin_location
+    2048  pm_node_buffer
+    8192  pm_node_caches
+     542  pmt_reclaim_blocks
+     104  printint
+      64  printuint
+     210  uart_printf
+
+ 
+ 16 568 bytes in section .bss
+     40 bytes in section .data
+     24 bytes in section .rodata
+  2 460 bytes in section .text
+ 
+  2 460 bytes of CODE  memory
+     24 bytes of CONST memory
+ 16 608 bytes of DATA  memory
+
+Errors: none
+Warnings: none

@@ -1,0 +1,499 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        02/Aug/2023  19:53:33
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\core\ubi\ubi_anchor.c
+#    Command line =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\core\ubi\ubi_anchor.c
+#        -D BOOT_LEVEL_2 -lcN
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List
+#        -o C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj
+#        --no_cse --no_unroll --no_inline --no_code_motion --no_tbaa
+#        --no_clustering --no_scheduling --debug --endian=little
+#        --cpu=ARM926EJ-S -e --fpu=None --dlib_config "C:\Program Files
+#        (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\ -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\
+#        --cpu_mode thumb -Ol --use_c++_inline
+#    List file    =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List\ubi_anchor.lst
+#    Object file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj\ubi_anchor.o
+#
+###############################################################################
+
+C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\core\ubi\ubi_anchor.c
+      1          /*********************************************************
+      2           * Module name: ubi_anchor.c
+      3           *
+      4           * Copyright 2010, 2011. All Rights Reserved, Crane Chu.
+      5           *
+      6           * This file is part of OpenNFM.
+      7           *
+      8           * OpenNFM is free software: you can redistribute it and/or 
+      9           * modify it under the terms of the GNU General Public 
+     10           * License as published by the Free Software Foundation, 
+     11           * either version 3 of the License, or (at your option) any 
+     12           * later version.
+     13           * 
+     14           * OpenNFM is distributed in the hope that it will be useful,
+     15           * but WITHOUT ANY WARRANTY; without even the implied 
+     16           * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR 
+     17           * PURPOSE. See the GNU General Public License for more 
+     18           * details.
+     19           *
+     20           * You should have received a copy of the GNU General Public 
+     21           * License along with OpenNFM. If not, see 
+     22           * <http://www.gnu.org/licenses/>.
+     23           *
+     24           * First written on 2010-01-01 by cranechu@gmail.com
+     25           *
+     26           * Module Description:
+     27           *    anchor block.
+     28           *
+     29           *********************************************************/
+     30          
+     31          #include <core\inc\cmn.h>
+     32          #include <core\inc\mtd.h>
+     33          #include <sys\sys.h>
+     34          #include "ubi_inc.h"
+     35          
+     36          /*********************************************************
+     37           * Funcion Name: anchor_find_next_block
+     38           *
+     39           * Description:
+     40           *    get a free and good block in anchor block region.
+     41           *
+     42           * Return Value:
+     43           *    STATUS      S/F
+     44           *
+     45           * Parameter List:
+     46           *    current_block  IN/OUT   the current block, and the
+     47           *                            next free good block as
+     48           *                            return value.
+     49           *
+     50           * NOTES:
+     51           *    N/A
+     52           *
+     53           *********************************************************/
+     54          static STATUS anchor_find_next_block(PHY_BLOCK* current_block);
+     55          
+     56          ANCHOR_TABLE anchor_table;
+     57          
+     58          /* anchor block tracker, the first blocks are reserved as anchor blocks. */
+     59          static PHY_BLOCK anchor_block = 0;
+     60          static PAGE_OFF anchor_next_page = 0;
+     61          
+     62          STATUS ANCHOR_Format(PHY_BLOCK total_data_block) {
+     63            LOG_BLOCK b;
+     64            STATUS ret;
+     65          
+     66            anchor_block = ANCHOR_FIRST_BLOCK;
+     67            anchor_next_page = 0;
+     68          
+     69            anchor_table.total_data_block = total_data_block;
+     70            anchor_table.previous_anchor_block = INVALID_BLOCK;
+     71            anchor_table.swl_current_area = 0;
+     72            memcpy(anchor_table.oath, ANCHOR_OATH, 11);
+     73            anchor_table.version = ANCHOR_VERSION;
+     74          
+     75            /* ERASE all anchor blocks */
+     76            for (b = ANCHOR_FIRST_BLOCK; b <= ANCHOR_LAST_BLOCK; b++) {
+     77              if (ANCHOR_IsBadBlock(b) == FALSE) {
+     78                ret = MTD_Erase(b);
+     79                if (ret != STATUS_SUCCESS) {
+     80                  /* mark bad block */
+     81                  ANCHOR_LogBadBlock(b);
+     82                }
+     83              }
+     84            }
+     85            return ANCHOR_Update();
+     86          }
+     87          
+     88          STATUS ANCHOR_Init() {
+     89            PHY_BLOCK block;
+     90            PHY_BLOCK previous_block1 = INVALID_BLOCK;
+     91            PAGE_OFF anchor_page1 = INVALID_PAGE;
+     92            PHY_BLOCK anchor_block1 = INVALID_BLOCK;
+     93            PAGE_OFF anchor_current_page;
+     94            PHY_BLOCK old_block;
+     95            STATUS ret;
+     96          
+     97            /* set the default anchor table, and all other tables */
+     98            memset(&anchor_table, 0xff, MPP_SIZE);
+     99            memset(&index_table, 0xff, MPP_SIZE);
+    100          
+    101            /* TODO: validate BBR issue in anchor blocks:
+    102             * may find anchor table in MANY blocks. Choose the updated one according to
+    103             * the plr info of anchor block reclaim.
+    104             */
+    105            for (block = ANCHOR_FIRST_BLOCK; block <= ANCHOR_LAST_BLOCK; block++) {
+    106              /* try to read the 1st page to see if the block is empty or not */
+    107              anchor_current_page = 0;
+    108              ret = TABLE_Read(block, &anchor_current_page, NULL);
+    109              if (ret == STATUS_SUCCESS) {
+    110                /* read anchor table from the last valid page */
+    111                anchor_current_page = INVALID_PAGE;
+    112                ret = TABLE_Read(block, &anchor_current_page, &anchor_table);
+    113              }
+    114          
+    115              if (ret == STATUS_SUCCESS) {
+    116                if (anchor_block1 == INVALID_BLOCK) {
+    117                  anchor_block1 = block;
+    118                  anchor_page1 = anchor_current_page;
+    119                  previous_block1 = anchor_table.previous_anchor_block;
+    120                } else {
+    121                  if (previous_block1 == block) {
+    122                    /* the first found block is the updated block */
+    123                    old_block = block;
+    124                  } else {
+    125                    /* this block is the updated anchor block */
+    126                    ASSERT(anchor_block1 == anchor_table.previous_anchor_block);
+    127                    anchor_block1 = block;
+    128                    anchor_page1 = anchor_current_page;
+    129                    old_block = anchor_table.previous_anchor_block;
+    130                  }
+    131                  /* erase the out of date block */
+    132                  if (old_block != INVALID_BLOCK) {
+    133                    ret = MTD_Erase(old_block);
+    134                    if (ret != STATUS_SUCCESS) {
+    135                      ANCHOR_LogBadBlock(old_block);
+    136                    }
+    137                  }
+    138                  /* only two blocks may have anchor table, so break now */
+    139                  break;
+    140                }
+    141              }
+    142            }
+    143            if (anchor_block1 != INVALID_BLOCK) {
+    144              anchor_block = anchor_block1;
+    145              anchor_next_page = anchor_page1 + 1;
+    146              ret = STATUS_SUCCESS;
+    147            } else {
+    148              ret = STATUS_FAILURE;
+    149            }
+    150            if (ret == STATUS_SUCCESS) {
+    151              if (anchor_table.total_data_block == INVALID_BLOCK
+    152                  || anchor_table.version != ANCHOR_VERSION
+    153                  || memcmp(anchor_table.oath, ANCHOR_OATH, 11) != 0) {
+    154                /* just a valid bad block table */
+    155                ret = STATUS_FAILURE;
+    156              }
+    157            }
+    158            
+    159            return ret;
+    160          }
+    161          
+    162          void ANCHOR_LogBadBlock(PHY_BLOCK block) {
+    163            UINT32 i;
+    164          
+    165            for (i = 0; i < ANCHOR_BADBLOCK_COUNT; i++) {
+    166              if (anchor_table.bad_block_table[i] == INVALID_BLOCK) {
+    167                anchor_table.bad_block_table[i] = block;
+    168                break;
+    169              }
+    170              if (anchor_table.bad_block_table[i] == block) {
+    171                break;
+    172              }
+    173            }
+    174            return;
+    175          }
+    176          
+    177          BOOL ANCHOR_IsBadBlock(PHY_BLOCK block) {
+    178            UINT32 i;
+    179            BOOL ret = FALSE;
+    180          
+    181            for (i = 0; i < ANCHOR_BADBLOCK_COUNT; i++) {
+    182              if (anchor_table.bad_block_table[i] == block) {
+    183                ret = TRUE;
+    184                break;
+    185              }
+    186            }
+    187          
+    188            return ret;
+    189          
+    190          }
+    191          
+    192          STATUS ANCHOR_Update() {
+    193            STATUS ret = STATUS_FAILURE;
+    194            BOOL anchor_reclaimed = FALSE;
+    195          
+    196            while (ret != STATUS_SUCCESS) {
+    197              if (anchor_next_page == PAGE_PER_PHY_BLOCK) {
+    198                /* reclaim anchor block, fill new plr info data */
+    199                anchor_table.previous_anchor_block = anchor_block;
+    200                ret = anchor_find_next_block(&anchor_block);
+    201                if (ret == STATUS_SUCCESS) {
+    202                  anchor_next_page = 0;
+    203                  anchor_reclaimed = TRUE;
+    204                } else {
+    205                  break;
+    206                }
+    207              }
+    208              /* write anchor table */
+    209              ret = TABLE_Write(anchor_block, anchor_next_page, &anchor_table);
+    210              if (ret == STATUS_SUCCESS) {
+    211                if (anchor_reclaimed == TRUE) {
+    212                  /* ERASE the pervious anchor table block */
+    213                  (void) MTD_Erase(anchor_table.previous_anchor_block);
+    214                }
+    215                anchor_next_page++;
+    216              } else if (ret == STATUS_BADBLOCK) {
+    217                /* handle bad block in anchor */
+    218                anchor_next_page = PAGE_PER_PHY_BLOCK;
+    219              }
+    220            }
+    221            return ret;
+    222          }
+    223          
+    224          void ANCHOR_IndexReclaim(PHY_BLOCK index_current_block,
+    225                                   ERASE_COUNT index_current_ec, PHY_BLOCK new_itb,
+    226                                   ERASE_COUNT new_itb_ec) {
+    227            anchor_table.index_new_block = new_itb;
+    228            anchor_table.index_new_ec = new_itb_ec;
+    229            anchor_table.index_old_block = index_current_block;
+    230            anchor_table.index_old_ec = index_current_ec;
+    231          }
+    232          
+    233          static STATUS anchor_find_next_block(PHY_BLOCK* current_block) {
+    234            STATUS ret = STATUS_SUCCESS;
+    235            PHY_BLOCK next_block = *current_block;
+    236          
+    237            do {
+    238              next_block = next_block + 1;
+    239              if (next_block > ANCHOR_LAST_BLOCK) {
+    240                next_block = ANCHOR_FIRST_BLOCK;
+    241              }
+    242          
+    243              /* return the next non-bad block in anchor blocks */
+    244              if (ANCHOR_IsBadBlock(next_block) == FALSE) {
+    245                ret = MTD_Erase(next_block);
+    246                if (ret != STATUS_SUCCESS) {
+    247                  /* mark bad block */
+    248                  ANCHOR_LogBadBlock(next_block);
+    249                }
+    250              } else {
+    251                ret = STATUS_BADBLOCK;
+    252              }
+    253            } while (ret != STATUS_SUCCESS && next_block != *current_block);
+    254          
+    255            if (next_block != *current_block) {
+    256              *current_block = next_block;
+    257            } else {
+    258              ret = STATUS_FAILURE;
+    259            }
+    260          
+    261            return ret;
+    262          }
+    263            
+    264          //jsj 添加开始
+    265          void ANCHOR_Format_Clean() {
+    266            PHY_BLOCK b;
+    267            STATUS ret = STATUS_SUCCESS;
+    268            /* ERASE all anchor blocks */
+    269            for (b = ANCHOR_FIRST_BLOCK; b <= ANCHOR_LAST_BLOCK; b++) 
+    270            {
+    271              ret = MTD_Erase(b);
+    272              if (ret != STATUS_SUCCESS) {
+    273           
+    274              }
+    275            }
+    276          } 
+    277          
+    278          
+    279          //jsjpenn
+    280          STATUS UBI_ANCHOR_table_store(){
+    281            
+    282            STATUS ret;
+    283            LOG_BLOCK block_to_write=55;//UBI_reserved_START_BLOCK =55;
+    284            PAGE_OFF page_to_write=17;//写在index table之后，即第17页
+    285            
+    286            PHY_BLOCK block;    
+    287            block=AREA_GetBlock(block_to_write);//写入的物理块号
+    288            
+    289            
+    290            ret=UBI_Write(block_to_write, page_to_write, &anchor_table, NULL, FALSE);
+    291            
+    292           //  if(ret == STATUS_SUCCESS) {
+    293           //   uart_printf("%s: Write anchor table to %d PEB ok\r\n",__func__,block); //PEB=62   
+    294           // }  
+    295            
+    296            return ret;
+    297          }
+    298          
+    299          STATUS UBI_ANCHOR_table_restore(){
+    300            STATUS ret;
+    301            
+    302            LOG_BLOCK block_to_write=55;//UBI_reserved_START_BLOCK =55;
+    303            PAGE_OFF page_to_write=17;//写在index table之后，即第17页
+    304            
+    305            //在恢复index table时保证index block PEB没变，最多只是indedx block的擦除次数变化
+    306            //所以在恢复anchor table时，直接恢复保存的anchor table即可
+    307            
+    308            //以下过程只是将保存的anchor table写到anchor block中的6个之一，但还不执行ANCHOR_Update()
+    309            //在更新完所有UBI和FTL表后，
+    310            //再将保存的anchor table读回，再执行ANCHOR_Update()
+    311            
+    312            PHY_BLOCK block;  
+    313            block=AREA_GetBlock(block_to_write); //保存的area table写入的物理块号  
+    314            ANCHOR_TABLE tem_anchor_table;  
+    315            ret=UBI_Read(block_to_write, page_to_write, &tem_anchor_table, NULL);  
+    316            if(ret == STATUS_SUCCESS) {
+    317              uart_printf("%s: Read stored anchor table from %d PEB ok\r\n",__func__,block);    
+    318            }
+    319            
+    320            //将保存的anchor table写入现在的anchor block中
+    321            if (anchor_next_page == PAGE_PER_PHY_BLOCK) {      
+    322                anchor_table.previous_anchor_block = anchor_block;
+    323                ret = anchor_find_next_block(&anchor_block);
+    324                uart_printf("%s: Find another anchor block=%d\r\n",__func__,anchor_block);
+    325                if (ret == STATUS_SUCCESS) {
+    326                 (void) MTD_Erase(anchor_table.previous_anchor_block);
+    327                  anchor_next_page = 0; 
+    328                 ret = TABLE_Write(anchor_block, anchor_next_page, &tem_anchor_table);
+    329                 if (ret == STATUS_SUCCESS) {
+    330                  uart_printf("%s: Rewrite old anchor table to %d page of %d PEB ok \r\n",__func__,anchor_next_page,anchor_block);   
+    331                 }      
+    332                }
+    333           
+    334            }else{
+    335              //write anchor table
+    336              ret = TABLE_Write(anchor_block, anchor_next_page, &tem_anchor_table);
+    337              if (ret == STATUS_SUCCESS) {
+    338                uart_printf("%s: Rewrite old anchor table to %d page of %d PEB ok \r\n",__func__,anchor_next_page,anchor_block);   
+    339              }
+    340            }
+    341             
+    342           return ret;
+    343          }
+    344                  
+    345          STATUS Truly_UBI_ANCHOR_table_restore(){
+    346            STATUS ret= STATUS_SUCCESS;  
+    347            anchor_next_page++;
+    348            return ret;
+    349          }
+
+   Maximum stack usage in bytes:
+
+   .cstack Function
+   ------- --------
+       8   ANCHOR_Format
+         8   -> ANCHOR_IsBadBlock
+         8   -> ANCHOR_LogBadBlock
+         8   -> ANCHOR_Update
+         8   -> MTD_Erase
+         8   -> __aeabi_memcpy
+       8   ANCHOR_Format_Clean
+         8   -> MTD_Erase
+       4   ANCHOR_IndexReclaim
+      32   ANCHOR_Init
+        32   -> ANCHOR_LogBadBlock
+        32   -> MTD_Erase
+        32   -> TABLE_Read
+        32   -> __aeabi_memset
+        32   -> memcmp
+       8   ANCHOR_IsBadBlock
+       4   ANCHOR_LogBadBlock
+      16   ANCHOR_Update
+        16   -> MTD_Erase
+        16   -> TABLE_Write
+        16   -> anchor_find_next_block
+       0   Truly_UBI_ANCHOR_table_restore
+    2064   UBI_ANCHOR_table_restore
+      2064   -> AREA_GetBlock
+      2064   -> MTD_Erase
+      2064   -> TABLE_Write
+      2064   -> UBI_Read
+      2064   -> anchor_find_next_block
+      2064   -> uart_printf
+      16   UBI_ANCHOR_table_store
+        16   -> AREA_GetBlock
+        16   -> UBI_Write
+      16   anchor_find_next_block
+        16   -> ANCHOR_IsBadBlock
+        16   -> ANCHOR_LogBadBlock
+        16   -> MTD_Erase
+      40   printint
+        40   -> UartWrite
+        40 __aeabi_uidiv
+        40 __aeabi_uidivmod
+      56   printuint
+        56   -> UartWrite
+        56 __aeabi_uidiv
+        56 __aeabi_uidivmod
+      40   uart_printf
+        40   -> UartWrite
+        40   -> printint
+        40   -> printuint
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+       4  ??DataTable10
+       4  ??DataTable11
+       4  ??DataTable11_1
+       4  ??DataTable11_2
+       4  ??DataTable11_3
+       4  ??DataTable11_4
+       4  ??DataTable11_5
+       4  ??DataTable11_6
+       4  ??DataTable5
+       4  ??DataTable6
+       4  ??DataTable8
+       4  ??DataTable9
+       4  ??DataTable9_1
+       4  ??DataTable9_2
+       4  ??DataTable9_3
+       4  ??DataTable9_4
+       4  ??DataTable9_5
+       8  ?_0
+      12  ?_1
+      48  ?_2
+      36  ?_3
+      56  ?_4
+      96  ANCHOR_Format
+      22  ANCHOR_Format_Clean
+      22  ANCHOR_IndexReclaim
+     252  ANCHOR_Init
+      38  ANCHOR_IsBadBlock
+      62  ANCHOR_LogBadBlock
+     126  ANCHOR_Update
+      18  Truly_UBI_ANCHOR_table_restore
+     204  UBI_ANCHOR_table_restore
+      34  UBI_ANCHOR_table_store
+       4  anchor_block
+      86  anchor_find_next_block
+       4  anchor_next_page
+    2048  anchor_table
+      20  digits
+      20  digits
+     104  printint
+      64  printuint
+     210  uart_printf
+      28  -- Other
+
+ 
+ 2 056 bytes in section .bss
+    40 bytes in section .data
+   188 bytes in section .rodata
+ 1 406 bytes in section .text
+ 
+ 1 406 bytes of CODE  memory
+   188 bytes of CONST memory
+ 2 096 bytes of DATA  memory
+
+Errors: none
+Warnings: 5

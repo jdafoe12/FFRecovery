@@ -1,0 +1,781 @@
+###############################################################################
+#
+# IAR ANSI C/C++ Compiler V7.40.5.9725/W32 for ARM        02/Aug/2023  19:53:33
+# Copyright 1999-2015 IAR Systems AB.
+#
+#    Cpu mode     =  thumb
+#    Endian       =  little
+#    Source file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\core\onfm.c
+#    Command line =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\core\onfm.c -D
+#        BOOT_LEVEL_2 -lcN
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List
+#        -o C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj
+#        --no_cse --no_unroll --no_inline --no_code_motion --no_tbaa
+#        --no_clustering --no_scheduling --debug --endian=little
+#        --cpu=ARM926EJ-S -e --fpu=None --dlib_config "C:\Program Files
+#        (x86)\IAR Systems\Embedded Workbench
+#        7.2\arm\INC\c\DLib_Config_Normal.h" -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\ -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\bsp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\csp\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\lib\
+#        -I
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\..\..\sys\lpc313x\usb\
+#        --cpu_mode thumb -Ol --use_c++_inline
+#    List file    =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\List\onfm.lst
+#    Object file  =  
+#        C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\prj\iar\Debug\Obj\onfm.o
+#
+###############################################################################
+
+C:\Users\bchen-adm\Desktop\FFRecovery2\nsac-hiftl\core\onfm.c
+      1          /*********************************************************
+      2           * Module name: onfm.c
+      3           *
+      4           * Copyright 2010, 2011. All Rights Reserved, Crane Chu.
+      5           *
+      6           * This file is part of OpenNFM.
+      7           *
+      8           * OpenNFM is free software: you can redistribute it and/or 
+      9           * modify it under the terms of the GNU General Public 
+     10           * License as published by the Free Software Foundation, 
+     11           * either version 3 of the License, or (at your option) any 
+     12           * later version.
+     13           * 
+     14           * OpenNFM is distributed in the hope that it will be useful,
+     15           * but WITHOUT ANY WARRANTY; without even the implied 
+     16           * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR 
+     17           * PURPOSE. See the GNU General Public License for more 
+     18           * details.
+     19           *
+     20           * You should have received a copy of the GNU General Public 
+     21           * License along with OpenNFM. If not, see 
+     22           * <http://www.gnu.org/licenses/>.
+     23           *
+     24           * First written on 2010-01-01 by cranechu@gmail.com
+     25           *
+     26           * Module Description:
+     27           *    Buffer writing sectors in RAM (e.g. FIFO), until
+     28           *    enough sectors to write as an MPP (multiple plane
+     29           *    page), which can program parallelly. Also force to
+     30           *    flush when stop or non-seqential writing happened.
+     31           *
+     32           *********************************************************/
+     33          
+     34          #include <core\inc\cmn.h>
+     35          #include <core\inc\buf.h>
+     36          #include <core\inc\ftl.h>
+     37          #include <core\inc\ubi.h>
+     38          #include <core\inc\mtd.h>
+     39          #include <sys\sys.h>
+     40          #include "core/ftl/ftl_inc.h"
+     41          #include "sys\lpc313x\lib\lpc313x_chip.h"
+     42          #define RAM_DISK_SECTOR_COUNT    (EXT_SDRAM_LENGTH/SECTOR_SIZE)
+     43          
+     44          #if (SIM_TEST == FALSE)
+     45          #include <drv_uart.h>
+     46          #else
+     47          #include <core\ftl\ftl_inc.h>
+     48          #endif
+     49          
+     50          #include <stdio.h>
+     51          
+     52          /* implement ONFM based on RAM, for bus debugging/testing */
+     53          #define ONFM_RAMDISK         (FALSE)
+     54          
+     55          #if (ONFM_RAMDISK == FALSE || SIM_TEST == TRUE)
+     56          
+     57          static
+     58          int onfm_read_sector(unsigned long sector_addr, void* sector_data);
+     59          
+     60          static
+     61          int onfm_write_sector(unsigned long sector_addr, void* sector_data);
+     62          
+     63          // JD
+     64          int cache_size = 0;
+     65          UINT32 map_cache[MAX_CACHE_SIZE][PM_PER_NODE + 1];
+     66          // end JD
+     67          
+     68          #if defined(__ICCARM__)
+     69          #pragma data_alignment=DMA_BURST_BYTES
+     70          #endif
+     71          static UINT8 onfm_read_buffer[MPP_SIZE];
+     72          
+     73          static LSADDR read_buffer_start_sector;
+     74          
+     75          SECTOR* ram_disk = (SECTOR*) (EXT_SDRAM_BASE);
+     76          
+     77          /* called after failure init */
+     78          int ONFM_Format() {
+     79            STATUS ret;
+     80                
+     81            MTD_Init();  
+     82            
+     83            ret = FTL_Format();
+     84            if (ret == STATUS_SUCCESS) {
+     85              return 0;
+     86            } else {
+     87              return -1;
+     88            }
+     89          }
+     90          
+     91          int ONFM_Capacity() {
+     92          
+     93            PGADDR page_count = FTL_Capacity() - 1;//240344
+     94            
+     95            uart_printf("%s: page_count=%d\r\n",__func__,page_count);
+     96            
+     97            int ret;
+     98            //在FS层中以扇区sector为单位进行读写，每个扇区512字节
+     99            //每个flash页2KB，所以提交给上层的扇区数=逻辑地址I总页数*4
+    100            ret = page_count << SECTOR_PER_MPP_SHIFT;//<<2=*4=961376
+    101          
+    102            //jsjpenn
+    103            uart_printf("%s: Sector number submitted=%d\r\n",__func__,ret);
+    104            
+    105            return ret;
+    106          }
+    107          
+    108          int ONFM_Mount() {
+    109            STATUS ret;
+    110            read_buffer_start_sector = INVALID_LSADDR;
+    111          
+    112            BUF_Init();
+    113            MTD_Init();
+    114           
+    115           
+    116            ret = FTL_Init();
+    117            if (ret == STATUS_SUCCESS) {
+    118              return 0;
+    119            } else {
+    120              return -1;
+    121            }
+    122          }
+    123          
+    124          int ONFM_Read(unsigned long sector_addr, unsigned long sector_count,
+    125                        void* sector_data) {
+    126          
+    127            unsigned long i;
+    128            STATUS status;
+    129            int ret = 0;
+    130            
+    131          
+    132            /* TODO: pre-read following page, pass back the pointer */
+    133            if (sector_addr % SECTOR_PER_MPP == 0 && sector_count == SECTOR_PER_MPP) {
+    134              /* read the full/aligned MPP directly, bypass the buffer read */
+    135              status = FTL_Read(sector_addr >> SECTOR_PER_MPP_SHIFT, sector_data);
+    136              if (status == STATUS_SUCCESS) {
+    137                ret = 0;
+    138              } else {
+    139                ret = -1;
+    140              }
+    141            } else {
+    142              for (i = 0; i < sector_count; i++) {
+    143                if (ret == 0) {
+    144                  ret = onfm_read_sector(sector_addr + i,
+    145                                         ((UINT8*) sector_data) + SECTOR_SIZE * i);
+    146                }
+    147              }
+    148            }
+    149            ASSERT(ret == 0);
+    150          
+    151            return ret;
+    152          }
+    153          
+    154          int ONFM_Write(unsigned long sector_addr, unsigned long sector_count,
+    155                         void* sector_data) {
+    156            //uart_printf("in write, addr: %d\n", sector_addr);
+    157            unsigned long i;
+    158            STATUS status;
+    159            int ret = 0;
+    160          
+    161            //JD
+    162            
+    163            // Get mapping before the write
+    164            PGADDR addr = sector_addr >> SECTOR_PER_MPP_SHIFT;
+    165            //uart_printf("Write address %d\n", addr);
+    166            LOG_BLOCK oldBlock;
+    167            PAGE_OFF oldPage;
+    168            if(ftl_read_state == 1) {
+    169              ftl_read_state = 0;
+    170              ret = PMT_Search(addr, &oldBlock, &oldPage);
+    171              ftl_read_state = 1;
+    172            }
+    173            else {
+    174              ret = PMT_Search(addr, &oldBlock, &oldPage);
+    175            }
+    176            //uart_printf("OLD MAPPING: B - %d P - %d\n", oldBlock, oldPage);
+    177            // JD end
+    178            
+    179            /* disable read buffer if something is written */
+    180            read_buffer_start_sector = INVALID_LSADDR;
+    181          
+    182            if (sector_addr % SECTOR_PER_MPP == 0 && sector_count == SECTOR_PER_MPP) {
+    183              // EXPERIMENT START
+    184              unsigned long sec_addr = sector_addr % RAM_DISK_SECTOR_COUNT;
+    185              if (sec_addr + sector_count >= RAM_DISK_SECTOR_COUNT) {
+    186                sec_addr = 0;
+    187              }
+    188              /*sec_DRAM_addr = (void*) &(ram_disk[sec_addr][0]);
+    189               memcpy(sec_DRAM_addr, sector_data, sector_count * SECTOR_SIZE);
+    190               sprintf(uart_buf,"\n\rExperiment: Written sector %d at %p to %d at %p\n\r", sector_addr, sector_data, sec_addr, sec_DRAM_addr);
+    191               UartWrite((unsigned char *)uart_buf,strlen(uart_buf));*/
+    192              // EXPERIMENT STOP
+    193              /* write the full/aligned MPP directly, bypass the buffer merge */
+    194              status = FTL_Write(sector_addr >> SECTOR_PER_MPP_SHIFT, sector_data);
+    195              
+    196              //jsjpenn    
+    197              if (status == STATUS_Remount) {
+    198               //uart_printf("%s: Start to remount\r\n",__func__);
+    199               ret=2;
+    200               return ret;
+    201              }//jsjpennend
+    202                     
+    203              if (status == STATUS_SUCCESS) {
+    204                ret = 0;
+    205              } else {
+    206                ret = -1;
+    207              }
+    208            } else {
+    209              for (i = 0; i < sector_count; i++) {
+    210                if (ret == 0) {
+    211                  ret = onfm_write_sector(sector_addr + i,
+    212                                          ((UINT8*) sector_data) + SECTOR_SIZE * i);
+    213                } else {
+    214                  break;
+    215                }
+    216              }
+    217          
+    218              if (ret == 0) {
+    219                /* flush the data in ram buffer */
+    220                ret = onfm_write_sector((unsigned long) (-1), NULL);
+    221              }
+    222            }
+    223            
+    224            // JD
+    225          
+    226            // Get mapping after the write
+    227            LOG_BLOCK newBlock;
+    228            PAGE_OFF newPage;
+    229            if(ftl_read_state == 1) {
+    230              ftl_read_state = 0;
+    231          
+    232              ret = PMT_Search(addr, &newBlock, &newPage);
+    233              ftl_read_state = 1;
+    234            } else {
+    235              ret = PMT_Search(addr, &newBlock, &newPage);
+    236            }
+    237            //uart_printf("NEW MAPPING: B - %d P - %d\n", newBlock, newPage);
+    238            // uart_printf("NEW? block: %d page: %d\n", newBlock, newPage);
+    239            //uart_printf("OLD: %d NEW: %d\n", oldBlock, newBlock);
+    240            
+    241            
+    242            if(oldBlock != newBlock || oldPage != newPage) { // The mapping has been updated
+    243             // uart_printf("saving old mapping\n");
+    244              
+    245              
+    246              PMT_CLUSTER cluster = CLUSTER_INDEX(addr); // The cluster of the mapping indicates where it is.This is the cluster for the mapping to update.
+    247             
+    248              // Check if the cluster is in cache
+    249              for(int i = 0; i < MAX_CACHE_SIZE; i++) {
+    250                if(map_cache[i][512] == cluster) {
+    251                    if(oldBlock == INVALID_BLOCK) {
+    252                      PM_NODE_SET_BLOCKPAGE(map_cache[i][PAGE_IN_CLUSTER(addr)], newBlock, newPage);
+    253                    }
+    254                    else {
+    255                      PM_NODE_SET_BLOCKPAGE(map_cache[i][PAGE_IN_CLUSTER(addr)], oldBlock, oldPage);
+    256                    }
+    257                    uart_printf("cache hit\n");
+    258                    goto IN_CACHE;
+    259                }
+    260              }
+    261              uart_printf("cache miss\n");
+    262              
+    263              // The cluster is not in cache. 
+    264              // First, write the front cluster in cache to storage
+    265              if(cache_size == MAX_CACHE_SIZE) {
+    266                cache_remove();
+    267              }
+    268              
+    269              // Add current cluster to end of queue
+    270              
+    271              // First, read the cluster into the queue
+    272              int index = cache_add(cluster);
+    273              uart_printf("index: %d\n", index);
+    274              if(index != -1) {
+    275                // Change the desired entry
+    276                if(oldBlock == INVALID_BLOCK) {
+    277                  PM_NODE_SET_BLOCKPAGE(map_cache[index][PAGE_IN_CLUSTER(addr)], newBlock, newPage);
+    278                 }
+    279                 else {
+    280                   PM_NODE_SET_BLOCKPAGE(map_cache[index][PAGE_IN_CLUSTER(addr)], oldBlock, oldPage);
+    281                 }
+    282              }
+    283              
+    284            }
+    285            IN_CACHE:
+    286            // JD end
+    287            //uart_printf("done\n");
+    288            return ret;
+    289          }
+    290          
+    291          // JD
+    292          // Function to dequeue mapping cache (Write first cache entry to disk, and move others forward
+    293          void cache_remove() {
+    294            
+    295            if(cache_size == 0) {
+    296              return;
+    297            }
+    298            cache_size--;
+    299            PMT_CLUSTER write_cluster = map_cache[0][PM_PER_NODE];
+    300              UINT32 pmNodes[PM_PER_NODE];
+    301              LOG_BLOCK pmBlock = PMTRESORE_START_BLOCK + (int)(write_cluster / PAGE_PER_PHY_BLOCK); // The logical block number for the backed up cluster
+    302              PAGE_OFF pmPage = write_cluster % PAGE_PER_PHY_BLOCK; // the page offset in pm block
+    303              
+    304              
+    305              
+    306              //UINT32 data[64][512]; // There is not enouph memory to hold the block.We can use the storage device as extended RAM
+    307              UBI_Erase(600, 600);
+    308              for(int i = 0; i < 64; i++) { // We need to overwrite the entire block
+    309                
+    310                //uart_printf("pmblock %d pmpage %d\n", pmBlock, pmPage);
+    311                
+    312                if(i != pmPage) {
+    313                  // Read the page
+    314                  if(ftl_read_state == 1) {
+    315                    ftl_read_state = 0;
+    316                    //uart_printf("in read\n");
+    317                    UBI_Read(pmBlock, i, &(pmNodes[0]), NULL); 
+    318                    //uart_printf("done read\n");
+    319                    ftl_read_state = 1;
+    320                  } else {
+    321                    UBI_Read(pmBlock, i, &(pmNodes[0]), NULL);
+    322                  }
+    323                }
+    324                else {
+    325                  for(int j = 0; j<PM_PER_NODE; j++) {
+    326                    pmNodes[j] = map_cache[0][j]; // Update the cluster.
+    327                  }
+    328                }
+    329                //uart_printf("Saved Mapping: %d %d ",PM_NODE_BLOCK(pmNodes[PAGE_IN_CLUSTER(addr)]), PM_NODE_PAGE(pmNodes[PAGE_IN_CLUSTER(addr)]));
+    330                //if(i == pmPage) {
+    331                  //if(oldBlock == INVALID_BLOCK) {
+    332                    //PM_NODE_SET_BLOCKPAGE(pmNodes[PAGE_IN_CLUSTER(addr)], newBlock, newPage);
+    333                  //}
+    334                  //else {
+    335                    //PM_NODE_SET_BLOCKPAGE(pmNodes[PAGE_IN_CLUSTER(addr)], oldBlock, oldPage);
+    336                  //}
+    337                //}
+    338                
+    339                // Write the page to a temporary location
+    340                UBI_Write(600, i, &(pmNodes[0]), NULL, FALSE);
+    341              }
+    342              uart_printf("Erase Block: %d\n", pmBlock);
+    343              UBI_Erase(pmBlock, pmBlock);
+    344              
+    345              // Write back the updated block
+    346              for( int i = 0; i < 64; i++) {
+    347                SPARE spare;
+    348                spare[0] = write_cluster;
+    349                if(ftl_read_state == 1) {
+    350                  ftl_read_state = 0;
+    351                  UBI_Read(600, i, &(pmNodes[0]), NULL);
+    352                  UBI_Write(pmBlock, i,&(pmNodes[0]), spare, FALSE);
+    353                  ftl_read_state = 1;
+    354                  //uart_printf("done herew\n");
+    355                }
+    356                else {
+    357                  UBI_Read(600, i, &(pmNodes[0]), NULL);
+    358                  UBI_Write(pmBlock, i, &(pmNodes[0]), spare, FALSE);
+    359                  if(i ==pmPage){
+    360                  //uart_printf("\n %d %d \n",PM_NODE_BLOCK(pmNodes[PAGE_IN_CLUSTER(addr)]), PM_NODE_PAGE(pmNodes[PAGE_IN_CLUSTER(addr)]));
+    361                  }
+    362                }
+    363              }
+    364              for(int i = 0; i < MAX_CACHE_SIZE - 1; i++) {
+    365                for(int j = 0; j <= PM_PER_NODE; j++) {
+    366                  map_cache[i][j] = map_cache[i + 1][j];
+    367                }
+    368              }
+    369              
+    370          }
+    371          
+    372          // Returns -1 on failure, otherwise returns index of new cluster.
+    373          int cache_add(int cluster) {
+    374            int index = MAX_CACHE_SIZE - 1;
+    375            index = cache_size;
+    376            if(cache_size == MAX_CACHE_SIZE) {
+    377              return -1;
+    378            }
+    379            cache_size++;
+    380            LOG_BLOCK pmBlock = PMTRESORE_START_BLOCK + (int)(cluster / PAGE_PER_PHY_BLOCK); // The logical block number for the backed up cluster
+    381            PAGE_OFF pmPage = cluster % PAGE_PER_PHY_BLOCK; // the page offset in pm block
+    382            if(ftl_read_state == 1) {
+    383              ftl_read_state =0;
+    384              UBI_Read(pmBlock, pmPage, map_cache[index], NULL);
+    385              ftl_read_state = 1;
+    386            }
+    387            else {
+    388              UBI_Read(pmBlock, pmPage, map_cache[index], NULL);
+    389            }
+    390            map_cache[index][PM_PER_NODE] = cluster;
+    391              return index;
+    392          }
+    393          
+    394          // JD end
+    395          
+    396          //jsjpenn
+    397          extern int g_ReceiveCommandNum;
+    398          extern UINT32 g_IdleCcount;
+    399          
+    400          int Start_change_state(){
+    401            int ret; 
+    402            
+    403            g_ReceiveCommandNum++;    
+    404            g_IdleCcount=0;
+    405              
+    406            if(g_ReceiveCommandNum==1 && g_state==1){      
+    407              ret=FTL_UBI_StartLockImage();//过程1
+    408              if(ret == STATUS_SUCCESS) {        
+    409               g_state++;        
+    410               uart_printf("%s: State 1 and process 1 done, we have entered state 2, start to test malware\r\n",__func__);       
+    411               ret=STATUS_SUCCESS;//不需要重启
+    412               return ret;
+    413              }
+    414            }
+    415          
+    416            //wpy
+    417            if(g_ReceiveCommandNum%2==0){
+    418              ret=FTL_UBI_RestoreImage();//过程2
+    419              if(ret == STATUS_SUCCESS) {
+    420               uart_printf("%s: Restore the image ok, the %d time to enter state 2,\r\n",__func__,g_ReceiveCommandNum);
+    421               ret=STATUS_Remount; //重启
+    422               return ret;
+    423              }
+    424            }  
+    425            if(g_ReceiveCommandNum%2==1){      
+    426              ret=FTL_UBI_StartLockImage();//过程1
+    427              if(ret == STATUS_SUCCESS) {              
+    428               uart_printf("%s: update the lock image ,g_state=%d,\r\n",__func__,g_state);       
+    429               ret=STATUS_SUCCESS;//不需要重启
+    430               return ret;
+    431              }
+    432            }
+    433           return ret; 
+    434          }
+    435          
+    436          
+    437          int ONFM_Unmount() {
+    438            int onfm_ret;
+    439            STATUS ret= STATUS_SUCCESS;
+    440          
+    441             
+    442            uart_printf("%s: USB is unmounting ...\n\r", __func__);
+    443            
+    444            if (ret == STATUS_SUCCESS) {
+    445              onfm_ret = 0;
+    446            } else {
+    447              onfm_ret = -1;
+    448            }
+    449          
+    450            return onfm_ret;
+    451          }
+    452          
+    453          static
+    454          int onfm_read_sector(unsigned long sector_addr, void* sector_data) {
+    455            PGADDR page_addr;
+    456            STATUS ret = STATUS_SUCCESS;
+    457            if (sector_addr
+    458                >= read_buffer_start_sector&& sector_addr < read_buffer_start_sector + SECTOR_PER_MPP) {
+    459              ; /* no need to read from FTL, just get data from the read cache */
+    460            } else {
+    461              page_addr = sector_addr >> SECTOR_PER_MPP_SHIFT;
+    462              ret = FTL_Read(page_addr, onfm_read_buffer);
+    463              if (ret == STATUS_SUCCESS) {
+    464                read_buffer_start_sector = page_addr << SECTOR_PER_MPP_SHIFT;
+    465              }
+    466            }
+    467          
+    468            if (ret == STATUS_SUCCESS && sector_data != NULL) {
+    469              memcpy(
+    470                  sector_data,
+    471                  &(onfm_read_buffer[(sector_addr - read_buffer_start_sector)
+    472                      * SECTOR_SIZE]),
+    473                  SECTOR_SIZE);
+    474          
+    475              return 0;
+    476            } else {
+    477              read_buffer_start_sector = INVALID_LSADDR;
+    478          
+    479              return -1;
+    480            }
+    481          }
+    482          
+    483          static
+    484          int onfm_write_sector(unsigned long sector_addr, void* sector_data) {
+    485            static LSADDR starting_sector = INVALID_LSADDR;
+    486            PGADDR page_addr = sector_addr >> SECTOR_PER_MPP_SHIFT;
+    487            STATUS ret = STATUS_SUCCESS;
+    488            void* buffer = NULL;
+    489            if (starting_sector == INVALID_LSADDR) {
+    490              if (sector_data != NULL) {
+    491                starting_sector = page_addr << SECTOR_PER_MPP_SHIFT;
+    492          
+    493                /* write to buffer */
+    494                BUF_PutSector(sector_addr, sector_data);
+    495              } else {
+    496                /* no data to flush. */
+    497                ret = STATUS_SUCCESS;
+    498              }
+    499            } else if (sector_addr >= starting_sector&&
+    500            sector_addr < starting_sector+SECTOR_PER_MPP &&
+    501            sector_data != NULL) {
+    502              /* write to buffer */
+    503              BUF_PutSector(sector_addr, sector_data);
+    504            } else {
+    505              ASSERT(
+    506                  sector_data == NULL || sector_addr == starting_sector + SECTOR_PER_MPP);
+    507          
+    508              /* flush the sectors in page buffer */
+    509              BUF_GetPage(&page_addr, &buffer);
+    510          
+    511              /* write to FTL */
+    512              ret = FTL_Write(page_addr, buffer);
+    513              if (ret == STATUS_SUCCESS) {
+    514                if (sector_data != NULL) {
+    515                  /* fill buffers with next sector */
+    516                  page_addr = sector_addr >> SECTOR_PER_MPP_SHIFT;
+    517                  starting_sector = page_addr << SECTOR_PER_MPP_SHIFT;
+    518          
+    519                  /* write to buffer */
+    520                  BUF_PutSector(sector_addr, sector_data);
+    521                } else {
+    522                  ASSERT(sector_addr == (unsigned long ) (-1));
+    523                  starting_sector = INVALID_LSADDR;
+    524                }
+    525              }
+    526            }
+    527          
+    528            if (ret == STATUS_SUCCESS) {
+    529              return 0;
+    530            } else {
+    531              return -1;
+    532            }
+    533          }
+    534          
+    535          #else
+    536          
+    537          #include "sys\lpc313x\lib\lpc313x_chip.h"
+    538          
+    539          #define RAM_DISK_SECTOR_COUNT    (EXT_SDRAM_LENGTH/SECTOR_SIZE)
+    540          
+    541          SECTOR* ram_disk = (SECTOR*)(EXT_SDRAM_BASE);
+    542          
+    543          int ONFM_Format()
+    544          {
+    545            memset(ram_disk, 0, RAM_DISK_SECTOR_COUNT*SECTOR_SIZE);
+    546          
+    547            return 0;
+    548          }
+    549          
+    550          int ONFM_Capacity()
+    551          {
+    552            return RAM_DISK_SECTOR_COUNT;
+    553          }
+    554          
+    555          int ONFM_Mount()
+    556          {
+    557           
+    558            memset(ram_disk, 0, RAM_DISK_SECTOR_COUNT*SECTOR_SIZE);
+    559          
+    560            return 0;
+    561          }
+    562          
+    563          int ONFM_Read(unsigned long sector_addr,
+    564              unsigned long sector_count,
+    565              void* sector_data)
+    566          {
+    567            ASSERT(sector_addr+sector_count <= RAM_DISK_SECTOR_COUNT);
+    568          
+    569            memcpy(sector_data,
+    570                &(ram_disk[sector_addr][0]),
+    571                sector_count*SECTOR_SIZE);
+    572          
+    573            return 0;
+    574          }
+    575          
+    576          int ONFM_Write(unsigned long sector_addr,
+    577              unsigned long sector_count,
+    578              void* sector_data)
+    579          {
+    580            ASSERT(sector_addr+sector_count <= RAM_DISK_SECTOR_COUNT);
+    581          
+    582            /* loop to cause a slow write */
+    583            memcpy(&(ram_disk[sector_addr][0]),
+    584                sector_data,
+    585                sector_count*SECTOR_SIZE);
+    586          
+    587            BUF_Free(sector_data);
+    588          
+    589            return 0;
+    590          }
+    591          
+    592          int ONFM_Unmount()
+    593          {
+    594            return 0;
+    595          }
+    596          
+    597          #endif
+
+   Maximum stack usage in bytes:
+
+   .cstack Function
+   ------- --------
+       8   ONFM_Capacity
+         8   -> FTL_Capacity
+         8   -> uart_printf
+       8   ONFM_Format
+         8   -> FTL_Format
+         8   -> MTD_Init
+       8   ONFM_Mount
+         8   -> BUF_Init
+         8   -> FTL_Init
+         8   -> MTD_Init
+      24   ONFM_Read
+        24   -> FTL_Read
+        24   -> onfm_read_sector
+        24 __aeabi_uidivmod
+       8   ONFM_Unmount
+         8   -> uart_printf
+      48   ONFM_Write
+        48   -> FTL_Write
+        48   -> PMT_Search
+        48   -> cache_add
+        48   -> cache_remove
+        48   -> onfm_write_sector
+        48   -> uart_printf
+        48 __aeabi_uidivmod
+       8   Start_change_state
+         8   -> FTL_UBI_RestoreImage
+         8   -> FTL_UBI_StartLockImage
+         8   -> uart_printf
+         8 __aeabi_idivmod
+      16   cache_add
+        16   -> UBI_Read
+        16 __aeabi_idiv
+        16 __aeabi_idivmod
+    2080   cache_remove
+      2080   -> UBI_Erase
+      2080   -> UBI_Read
+      2080   -> UBI_Write
+      2080   -> uart_printf
+      2080 __aeabi_uidivmod
+      16   onfm_read_sector
+        16   -> FTL_Read
+        16   -> __aeabi_memcpy
+      24   onfm_write_sector
+        24   -> BUF_GetPage
+        24   -> BUF_PutSector
+        24   -> FTL_Write
+      40   printint
+        40   -> UartWrite
+        40 __aeabi_uidiv
+        40 __aeabi_uidivmod
+      56   printuint
+        56   -> UartWrite
+        56 __aeabi_uidiv
+        56 __aeabi_uidivmod
+      40   uart_printf
+        40   -> UartWrite
+        40   -> printint
+        40   -> printuint
+
+
+   Section sizes:
+
+   Bytes  Function/Label
+   -----  --------------
+       4  ??DataTable10
+       4  ??DataTable11
+       4  ??DataTable11_1
+       4  ??DataTable11_10
+       4  ??DataTable11_11
+       4  ??DataTable11_12
+       4  ??DataTable11_13
+       4  ??DataTable11_14
+       4  ??DataTable11_2
+       4  ??DataTable11_3
+       4  ??DataTable11_4
+       4  ??DataTable11_5
+       4  ??DataTable11_6
+       4  ??DataTable11_7
+       4  ??DataTable11_8
+       4  ??DataTable11_9
+       4  ??DataTable4
+       4  ??DataTable4_1
+       4  ??DataTable5
+       4  ??DataTable5_1
+       4  ??DataTable5_2
+       4  ??DataTable5_3
+       4  ??DataTable5_4
+       4  ??DataTable7
+       4  ??DataTable7_1
+       4  ??DataTable7_2
+       4  ??DataTable7_3
+       4  ??DataTable7_4
+       4  ??DataTable7_5
+       4  ??DataTable9
+       4  ??DataTable9_1
+       4  ??DataTable9_2
+       8  ?_0
+      20  ?_1
+      28  ?_10
+      36  ?_2
+      12  ?_3
+      12  ?_4
+      12  ?_5
+      20  ?_6
+      84  ?_7
+      60  ?_8
+      44  ?_9
+      36  ONFM_Capacity
+      28  ONFM_Format
+      40  ONFM_Mount
+      92  ONFM_Read
+      30  ONFM_Unmount
+     512  ONFM_Write
+     156  Start_change_state
+     126  cache_add
+     340  cache_remove
+       4  cache_size
+      20  digits
+      20  digits
+   41040  map_cache
+    2048  onfm_read_buffer
+     106  onfm_read_sector
+     200  onfm_write_sector
+     104  printint
+      64  printuint
+       4  ram_disk
+       4  read_buffer_start_sector
+       4  starting_sector
+     210  uart_printf
+      52  -- Other
+
+ 
+ 43 096 bytes in section .bss
+     48 bytes in section .data
+    388 bytes in section .rodata
+  2 172 bytes in section .text
+ 
+  2 172 bytes of CODE  memory
+    388 bytes of CONST memory
+ 43 144 bytes of DATA  memory
+
+Errors: none
+Warnings: none
